@@ -36,6 +36,11 @@ $unsigned = Join-Path $buildRoot 'unsigned.apk'
 $resRoot = Join-Path $buildRoot 'res'
 New-Item -ItemType Directory -Path (Join-Path $resRoot 'drawable') -Force | Out-Null
 Copy-Item -LiteralPath 'build\icon.png' -Destination (Join-Path $resRoot 'drawable\vishal_jarvis_icon.png')
+$manifestRes = Join-Path $projectRoot 'android\app\src\main\res\xml'
+if (Test-Path -LiteralPath $manifestRes) {
+  New-Item -ItemType Directory -Path (Join-Path $resRoot 'xml') -Force | Out-Null
+  Copy-Item -Path (Join-Path $manifestRes '*.xml') -Destination (Join-Path $resRoot 'xml')
+}
 $compiledResources = Join-Path $buildRoot 'resources.zip'
 & (Join-Path $toolsRoot 'aapt2.exe') compile --dir $resRoot -o $compiledResources
 if ($LASTEXITCODE -ne 0) { throw 'Android icon resource compilation failed.' }
