@@ -73,7 +73,7 @@ public final class MobileActions {
       boolean ok=getResultCode()==Activity.RESULT_OK;
       result.complete(id,status(ok?"sms_delivered_to_network":"sms_failed",ok
         ?"SMS accepted by the network for +"+to+"."
-        :"Android could not send the SMS (code "+getResultCode()+"). Nothing was sent."));
+        :"Android could not send the SMS (code "+getResultCode()+"). Nothing was sent.",null));
     }
   };
 
