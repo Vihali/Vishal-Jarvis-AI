@@ -1,0 +1,95 @@
+
+name: Vishal Jarvis Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Vishal-Jarvis-Android-App-Source.zip'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK Components
+        shell: pwsh
+        run: |
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+
+      - name: Extract and Validate Source ZIP
+        shell: pwsh
+        run: |
+          $zipPath = "Vishal-Jarvis-Android-App-Source.zip"
+
+          if (!(Test-Path $zipPath)) {
+            throw "Source ZIP not found!"
+          }
+
+          Expand-Archive -Path $zipPath -DestinationPath . -Force
+
+          $project = "Vishal-Jarvis-Android-App-Source"
+
+          if (!(Test-Path "$project/package.json")) {
+            throw "package.json not found!"
+          }
+
+          if (!(Test-Path "$project/scripts/build-android.ps1")) {
+            throw "Build script not found!"
+          }
+
+      - name: Install Dependencies
+        shell: pwsh
+        working-directory: Vishal-Jarvis-Android-App-Source
+        run: |
+          npm install
+          if ($LASTEXITCODE -ne 0) {
+            throw "Dependency installation failed!"
+          }
+
+      - name: Build Android APK
+        shell: pwsh
+        working-directory: Vishal-Jarvis-Android-App-Source
+        run: |
+          pwsh -NoProfile -File scripts/build-android.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android APK build failed!"
+          }
+
+      - name: Verify APK
+        shell: pwsh
+        working-directory: Vishal-Jarvis-Android-App-Source
+        run: |
+          $apk = "artifacts/android/Vishal-Jarvis-1.1.0-private.apk"
+
+          if (!(Test-Path $apk)) {
+            throw "APK file was not generated!"
+          }
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vishal-Jarvis-APK
+          path: Vishal-Jarvis-Android-App-Source/artifacts/android/Vishal-Jarvis-1.1.0-private.apk
+          if-no-files-found: error
