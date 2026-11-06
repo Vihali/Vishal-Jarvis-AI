@@ -36,10 +36,12 @@ $unsigned = Join-Path $buildRoot 'unsigned.apk'
 $resRoot = Join-Path $buildRoot 'res'
 New-Item -ItemType Directory -Path (Join-Path $resRoot 'drawable') -Force | Out-Null
 Copy-Item -LiteralPath 'build\icon.png' -Destination (Join-Path $resRoot 'drawable\vishal_jarvis_icon.png')
-$manifestRes = Join-Path $projectRoot 'android\app\src\main\res\xml'
-if (Test-Path -LiteralPath $manifestRes) {
-  New-Item -ItemType Directory -Path (Join-Path $resRoot 'xml') -Force | Out-Null
-  Copy-Item -Path (Join-Path $manifestRes '*.xml') -Destination (Join-Path $resRoot 'xml')
+foreach ($folder in @('xml', 'values')) {
+  $manifestRes = Join-Path $projectRoot "android\app\src\main\res\$folder"
+  if (Test-Path -LiteralPath $manifestRes) {
+    New-Item -ItemType Directory -Path (Join-Path $resRoot $folder) -Force | Out-Null
+    Copy-Item -Path (Join-Path $manifestRes '*.xml') -Destination (Join-Path $resRoot $folder)
+  }
 }
 $compiledResources = Join-Path $buildRoot 'resources.zip'
 & (Join-Path $toolsRoot 'aapt2.exe') compile --dir $resRoot -o $compiledResources
