@@ -103,6 +103,12 @@ jobs:
             throw "Android SDK installation failed."
           }
 
+      - name: Restore signing key
+        uses: actions/cache@v4
+        with:
+          path: app-source/android/local-debug.keystore
+          key: vishal-jarvis-debug-keystore-v1
+
       - name: Install Project Dependencies
         shell: pwsh
         run: |
@@ -183,3 +189,66 @@ jobs:
           name: Vishal-Jarvis-Source
           path: Vishal-Jarvis-Android-App-Source.zip
           if-no-files-found: error
+
+  release:
+    name: Publish APK to GitHub Releases
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the built APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Vishal-Jarvis-APK
+          path: dist
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: v1.2.0
+        run: |
+          set -euo pipefail
+          APK_PATH=$(find dist -type f -name '*.apk' -print -quit)
+          if [ -z "$APK_PATH" ]; then echo "No APK in the build artifact"; exit 1; fi
+          APK_NAME=$(basename "$APK_PATH")
+          echo "Publishing $APK_NAME"
+
+          cat > release-notes.md <<EOF
+          Vishal Jarvis for Android **1.2.0** — a substantial agent upgrade.
+
+          ### What is new
+          - **Typed chat can now act on your phone.** It streams its answer and runs Android actions through Gemini function calling (up to four steps per request).
+          - **23 device actions:** open apps, open https links, YouTube/web search, WhatsApp and SMS drafts, dialer and saved-contact calls, flashlight, Wi-Fi and 13 system panels, alarms, timers, calendar, Maps, share sheet, clipboard, media keys, media volume, battery/network/storage status, installed-app list, camera.
+          - **Long-term memory:** "remember that …" stores one short fact locally (max 30). Passwords, OTPs and keys are refused.
+          - **Faster, clearer UI:** streaming replies, per-message copy/read/retry, conversation search, transcript copy/share, quick-action chips, permission manager, light/dark themes.
+          - **Same safety rules:** calls only open the dialer, messages stay drafts you send, system switches open their own panel. No screen capture, notification reading or file access.
+
+          ### Direct APK download
+          https://github.com/$REPO/releases/download/$TAG/$APK_NAME
+
+          ### Install
+          1. Open the link above on your phone and download the APK.
+          2. Allow "Install unknown apps" for your browser or file manager when Android asks.
+          3. Open the file and install.
+          4. Launch **Vishal Jarvis**, then Settings → paste your own Gemini API key.
+
+          If an older Vishal Jarvis build is already installed, uninstall it first — testing builds use a local debug signature, so Android may refuse an update over a different key.
+
+          ### Requirements
+          Android 8.0 (API 26) or newer, Android System WebView 100+, OpenGL ES 3, internet, and your own Gemini API key with access to the chosen model.
+
+          This is a private testing build signed with a local development key, not a Play Store release. CI compiled it from \`app-source/\`; startup, 3D rendering, permissions and each device action still need verification on your own phone.
+          EOF
+
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$REPO" --title "Vishal Jarvis for Android 1.2.0" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" \
+              --title "Vishal Jarvis for Android 1.2.0" --notes-file release-notes.md --prerelease
+          fi
+
+          gh release upload "$TAG" "$APK_PATH" --repo "$REPO" --clobber
+          gh release view "$TAG" --repo "$REPO" --json url,assets --jq '{url: .url, assets: [.assets[].name]}'
