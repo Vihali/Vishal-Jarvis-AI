@@ -1,20 +1,61 @@
-
 name: Vishal Jarvis Android Build
 
 on:
   workflow_dispatch:
   push:
     paths:
-      - 'Vishal-Jarvis-Android-App-Source.zip'
+      - 'app-source/**'
+      - '.github/workflows/android-build.yml'
+  pull_request:
+    paths:
+      - 'app-source/**'
       - '.github/workflows/android-build.yml'
 
 permissions:
   contents: read
 
 jobs:
+  verify-web:
+    name: Typecheck and build web assets
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app-source
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: app-source/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck TypeScript
+        run: npm run typecheck
+
+      - name: Run parser and tool-schema tests
+        run: npm test
+
+      - name: Build bundled mobile assets
+        run: npm run build:mobile-assets
+
+      - name: Upload web assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vishal-Jarvis-web-assets
+          path: app-source/android/app/src/main/assets
+          if-no-files-found: error
+
   build:
     name: Build Vishal Jarvis APK
+    needs: verify-web
     runs-on: windows-2025
+    defaults:
+      run:
+        working-directory: app-source
 
     steps:
       - name: Checkout Repository
@@ -24,6 +65,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: app-source/package-lock.json
 
       - name: Set up Java
         uses: actions/setup-java@v5
@@ -60,44 +103,29 @@ jobs:
             throw "Android SDK installation failed."
           }
 
-      - name: Extract Android Source ZIP
-        shell: pwsh
-        run: |
-          $zip = Join-Path $env:GITHUB_WORKSPACE "Vishal-Jarvis-Android-App-Source.zip"
-
-          if (!(Test-Path $zip)) {
-            throw "Source ZIP not found in repository root."
-          }
-
-          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
-
-          $source = Join-Path $env:RUNNER_TEMP "Vishal-Jarvis-Android-App-Source"
-
-          if (!(Test-Path "$source/package.json")) {
-            throw "package.json not found inside source ZIP."
-          }
-
-          if (!(Test-Path "$source/scripts/build-android.ps1")) {
-            throw "Android build script not found inside source ZIP."
-          }
-
-          "SOURCE_DIR=$source" | Out-File -FilePath $env:GITHUB_ENV -Append
-
       - name: Install Project Dependencies
         shell: pwsh
         run: |
-          Set-Location $env:SOURCE_DIR
-          npm install
+          npm ci
 
           if ($LASTEXITCODE -ne 0) {
-            throw "npm install failed."
+            throw "npm ci failed."
           }
+
+      - name: Typecheck, test and bundle assets
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw "TypeScript typecheck failed." }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw "Parser tests failed." }
+          npm run build:mobile-assets
+          if ($LASTEXITCODE -ne 0) { throw "Mobile asset build failed." }
 
       - name: Build Android APK
         shell: pwsh
         run: |
-          Set-Location $env:SOURCE_DIR
-          pwsh -NoProfile -File scripts/build-android.ps1
+          pwsh -NoProfile -File scripts/build-android.ps1 -SdkRoot $env:ANDROID_HOME -JavaRoot $env:JAVA_HOME
 
           if ($LASTEXITCODE -ne 0) {
             throw "Android APK build failed."
@@ -106,7 +134,7 @@ jobs:
       - name: Verify APK
         shell: pwsh
         run: |
-          $apk = Join-Path $env:SOURCE_DIR "artifacts/android/Vishal-Jarvis-1.1.0-private.apk"
+          $apk = Join-Path (Get-Location) "artifacts/android/Vishal-Jarvis-1.2.0-private.apk"
 
           if (!(Test-Path $apk)) {
             throw "APK file was not generated."
@@ -118,5 +146,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Vishal-Jarvis-APK
-          path: ${{ runner.temp }}/Vishal-Jarvis-Android-App-Source/artifacts/android/Vishal-Jarvis-1.1.0-private.apk
+          path: app-source/artifacts/android/Vishal-Jarvis-1.2.0-private.apk
+          if-no-files-found: error
+
+      - name: Package source ZIP
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:GITHUB_WORKSPACE "Vishal-Jarvis-Android-App-Source.zip"
+          Compress-Archive -Path (Join-Path $env:GITHUB_WORKSPACE "app-source") -DestinationPath $zip -Force
+          Write-Host "Source package: $zip"
+
+      - name: Upload source package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vishal-Jarvis-Source
+          path: Vishal-Jarvis-Android-App-Source.zip
           if-no-files-found: error

@@ -1,0 +1,8 @@
+node_modules/
+android/app/build/
+android/app/src/main/assets/
+android/local-debug.keystore
+artifacts/
+build/icon.png
+*.apk
+*.log
