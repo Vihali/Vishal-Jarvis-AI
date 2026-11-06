@@ -164,7 +164,17 @@ jobs:
         shell: pwsh
         run: |
           $zip = Join-Path $env:GITHUB_WORKSPACE "Vishal-Jarvis-Android-App-Source.zip"
-          Compress-Archive -Path (Join-Path $env:GITHUB_WORKSPACE "app-source") -DestinationPath $zip -Force
+          Remove-Item -LiteralPath $zip -ErrorAction SilentlyContinue
+
+          # bsdtar creates a zip without node_modules or build output.
+          tar.exe -a -c -f $zip --exclude=node_modules --exclude=android/app/build `
+            --exclude=android/app/src/main/assets --exclude=artifacts `
+            --exclude=android/local-debug.keystore -C $env:GITHUB_WORKSPACE app-source
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Source packaging failed."
+          }
+
           Write-Host "Source package: $zip"
 
       - name: Upload source package
