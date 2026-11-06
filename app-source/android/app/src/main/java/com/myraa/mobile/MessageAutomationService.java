@@ -1,10 +1,12 @@
 package com.myraa.mobile;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -168,6 +170,12 @@ public final class MessageAutomationService extends AccessibilityService {
     }
   }
 
+  private static int bottomOf(AccessibilityNodeInfo node) {
+    Rect bounds = new Rect();
+    try { node.getBoundsInScreen(bounds); } catch (RuntimeException ignored) { return 0; }
+    return bounds.bottom;
+  }
+
   private static int length(CharSequence value) { return value == null ? 0 : value.toString().trim().length(); }
 
   private boolean setText(Job job, AccessibilityNodeInfo composer) {
@@ -193,7 +201,7 @@ public final class MessageAutomationService extends AccessibilityService {
     AccessibilityNodeInfo best = null;
     int bestBottom = -1;
     for (AccessibilityNodeInfo node : nodes) {
-      int bottom = node.getBoundsInScreen().bottom;
+      int bottom = bottomOf(node);
       if (bottom > bestBottom) { bestBottom = bottom; best = node; }
     }
     return best;
@@ -213,7 +221,7 @@ public final class MessageAutomationService extends AccessibilityService {
       if (text.equals("send") || text.contains("পাঠান") || text.contains("পাঠাও")) score += 5;
       if (id.endsWith("send") || id.contains("send_button") || id.contains(":id/send")) score += 4;
       if (score == 0) continue;
-      score += node.getBoundsInScreen().bottom / 40; // prefer the composer row near the bottom
+      score += bottomOf(node) / 40; // prefer the composer row near the bottom
       if (score > bestScore) { bestScore = score; best = node; }
     }
     return best;
