@@ -6,90 +6,117 @@ on:
   push:
     paths:
       - 'Vishal-Jarvis-Android-App-Source.zip'
+      - '.github/workflows/android-build.yml'
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build Vishal Jarvis APK
     runs-on: windows-2025
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22'
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - name: Set up Java
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 21
+          java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: false
+          log-accepted-android-sdk-licenses: false
+          packages: ''
+
+      - name: Accept Android SDK Licenses
+        shell: pwsh
+        run: |
+          $sdkmanager = (Get-Command sdkmanager.bat -ErrorAction Stop).Source
+          $answers = @('y') * 30
+          $answers | & $sdkmanager --licenses
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android SDK license acceptance failed."
+          }
 
       - name: Install Android SDK Components
         shell: pwsh
         run: |
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          $sdkmanager = (Get-Command sdkmanager.bat -ErrorAction Stop).Source
 
-      - name: Extract and Validate Source ZIP
-        shell: pwsh
-        run: |
-          $zipPath = "Vishal-Jarvis-Android-App-Source.zip"
+          & $sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
-          if (!(Test-Path $zipPath)) {
-            throw "Source ZIP not found!"
-          }
-
-          Expand-Archive -Path $zipPath -DestinationPath . -Force
-
-          $project = "Vishal-Jarvis-Android-App-Source"
-
-          if (!(Test-Path "$project/package.json")) {
-            throw "package.json not found!"
-          }
-
-          if (!(Test-Path "$project/scripts/build-android.ps1")) {
-            throw "Build script not found!"
-          }
-
-      - name: Install Dependencies
-        shell: pwsh
-        working-directory: Vishal-Jarvis-Android-App-Source
-        run: |
-          npm install
           if ($LASTEXITCODE -ne 0) {
-            throw "Dependency installation failed!"
+            throw "Android SDK installation failed."
+          }
+
+      - name: Extract Android Source ZIP
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:GITHUB_WORKSPACE "Vishal-Jarvis-Android-App-Source.zip"
+
+          if (!(Test-Path $zip)) {
+            throw "Source ZIP not found in repository root."
+          }
+
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+
+          $source = Join-Path $env:RUNNER_TEMP "Vishal-Jarvis-Android-App-Source"
+
+          if (!(Test-Path "$source/package.json")) {
+            throw "package.json not found inside source ZIP."
+          }
+
+          if (!(Test-Path "$source/scripts/build-android.ps1")) {
+            throw "Android build script not found inside source ZIP."
+          }
+
+          "SOURCE_DIR=$source" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install Project Dependencies
+        shell: pwsh
+        run: |
+          Set-Location $env:SOURCE_DIR
+          npm install
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm install failed."
           }
 
       - name: Build Android APK
         shell: pwsh
-        working-directory: Vishal-Jarvis-Android-App-Source
         run: |
+          Set-Location $env:SOURCE_DIR
           pwsh -NoProfile -File scripts/build-android.ps1
+
           if ($LASTEXITCODE -ne 0) {
-            throw "Android APK build failed!"
+            throw "Android APK build failed."
           }
 
       - name: Verify APK
         shell: pwsh
-        working-directory: Vishal-Jarvis-Android-App-Source
         run: |
-          $apk = "artifacts/android/Vishal-Jarvis-1.1.0-private.apk"
+          $apk = Join-Path $env:SOURCE_DIR "artifacts/android/Vishal-Jarvis-1.1.0-private.apk"
 
           if (!(Test-Path $apk)) {
-            throw "APK file was not generated!"
+            throw "APK file was not generated."
           }
+
+          Write-Host "APK successfully generated: $apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Vishal-Jarvis-APK
-          path: Vishal-Jarvis-Android-App-Source/artifacts/android/Vishal-Jarvis-1.1.0-private.apk
+          path: ${{ runner.temp }}/Vishal-Jarvis-Android-App-Source/artifacts/android/Vishal-Jarvis-1.1.0-private.apk
           if-no-files-found: error
