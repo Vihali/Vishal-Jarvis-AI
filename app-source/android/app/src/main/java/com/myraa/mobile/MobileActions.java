@@ -218,22 +218,22 @@ public final class MobileActions {
   }
   private void openPanel(String id,String raw){
     String panel=normalize(raw);
-    String action;
-    if(panel.equals("bluetooth"))action=Settings.ACTION_BLUETOOTH_SETTINGS;
-    else if(panel.equals("sound"))action=Settings.ACTION_SOUND_SETTINGS;
-    else if(panel.equals("display"))action=Settings.ACTION_DISPLAY_SETTINGS;
-    else if(panel.equals("battery"))action=Build.VERSION.SDK_INT>=22?Settings.ACTION_BATTERY_SAVER_SETTINGS:Settings.ACTION_SETTINGS;
-    else if(panel.equals("location"))action=Settings.ACTION_LOCATION_SOURCE_SETTINGS;
-    else if(panel.equals("apps"))action=Settings.ACTION_APPLICATION_SETTINGS;
-    else if(panel.equals("notifications"))action=Settings.ACTION_NOTIFICATION_SETTINGS;
-    else if(panel.equals("data"))action=Settings.ACTION_DATA_USAGE_SETTINGS;
-    else if(panel.equals("airplane"))action=Settings.ACTION_AIRPLANE_MODE_SETTINGS;
-    else if(panel.equals("accessibility"))action=Settings.ACTION_ACCESSIBILITY_SETTINGS;
-    else if(panel.equals("nfc"))action=Settings.ACTION_NFC_SETTINGS;
+    Intent intent;
+    if(panel.equals("bluetooth"))intent=new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
+    else if(panel.equals("sound"))intent=new Intent(Settings.ACTION_SOUND_SETTINGS);
+    else if(panel.equals("display"))intent=new Intent(Settings.ACTION_DISPLAY_SETTINGS);
+    else if(panel.equals("battery"))intent=new Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS);
+    else if(panel.equals("location"))intent=new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+    else if(panel.equals("apps"))intent=new Intent(Settings.ACTION_APPLICATION_SETTINGS);
+    else if(panel.equals("notifications"))intent=new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,activity.getPackageName());
+    else if(panel.equals("data"))intent=new Intent(Settings.ACTION_DATA_USAGE_SETTINGS);
+    else if(panel.equals("airplane"))intent=new Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS);
+    else if(panel.equals("accessibility"))intent=new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+    else if(panel.equals("nfc"))intent=new Intent(Settings.ACTION_NFC_SETTINGS);
     else if(panel.equals("wifi")){openWifiSettings(id);return;}
-    else if(panel.equals("home"))action=Settings.ACTION_HOME_SETTINGS;
-    else action=Settings.ACTION_SETTINGS;
-    boolean opened=launcher.open(new Intent(action));
+    else if(panel.equals("home"))intent=new Intent(Settings.ACTION_HOME_SETTINGS);
+    else intent=new Intent(Settings.ACTION_SETTINGS);
+    boolean opened=launcher.open(intent);
     finish(id,opened?"settings_opened":"unavailable",opened?"Opened the "+panel+" settings. Android does not let this app change that switch silently, so tap the control yourself.":"This device could not open those settings.");
   }
   private void setAlarm(String id,int hour,int minute,String label){
