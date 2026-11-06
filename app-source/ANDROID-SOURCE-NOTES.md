@@ -1,9 +1,22 @@
-# Android source notes — Vishal Jarvis 1.2.0
+# Android source notes — Vishal Jarvis 1.3.0
 
 The Android app keeps its original native package ID and bridge/prefs/event names for
 compatibility, while its visible app name and assistant identity are Vishal Jarvis.
 The mobile 3D character is `src/mobile/RobotCharacter.ts`, a self-contained procedural
 Three.js male android. It replaces the previously referenced external PMX model.
+
+## What changed in 1.3.0
+- `call` places the call itself (`ACTION_CALL`) and, when `TelecomManager` reports more than
+  one call-capable account, returns `needs_sim` with the labels so the agent can ask which
+  SIM; the retry passes `sim` and `EXTRA_PHONE_ACCOUNT_HANDLE`.
+- `send_message` (WhatsApp, Telegram, Instagram, Messenger, SMS) is always prepare → confirm:
+  the first call returns `needs_confirmation` with the exact text, `confirm=true` executes.
+  SMS goes through `SmsManager` (per-SIM subscription when chosen) and reports the sent
+  receipt; chat apps go through `MessageAutomationService`, an opt-in AccessibilityService
+  restricted to those packages, which fills the composer and clicks Send, then verifies the
+  composer is empty before reporting `sent`.
+- `cancel_send` and `sim_info` were added; `whatsapp_message`, `send_sms`, `call_number` and
+  `call_contact` were replaced by `call` and `send_message`.
 
 ## What changed in 1.2.0
 
@@ -42,11 +55,11 @@ permission manager, theme and reduced-motion settings, offline banner, onboardin
 
 ## Security posture (unchanged principles)
 
-- No accessibility service, MediaProjection, notification listener, shell or file APIs.
+- One opt-in accessibility service, scoped to WhatsApp/WhatsApp Business/Telegram/Instagram/Messenger; no MediaProjection, notification listener, shell or file APIs.
 - No arbitrary intent from model output: URLs must be public http(s) with a host and no
   credentials; app names resolve through launcher activities; phone numbers and contact
   names are validated and resolved locally.
-- Messages are drafts; calls only open the dialer; system toggles open their own panel.
+- Sending is always prepare → user says send → execute; system toggles still open their own panel.
 - The API key stays in Keystore and is never exposed to the WebView.
 - Provider error bodies never reach the UI or logs.
 

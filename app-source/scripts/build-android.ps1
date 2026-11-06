@@ -68,7 +68,7 @@ if (-not (Test-Path -LiteralPath $keyStore)) {
   if ($LASTEXITCODE -ne 0) { throw 'Local development signing key creation failed.' }
 }
 New-Item -ItemType Directory -Path 'artifacts\android' -Force | Out-Null
-$apk = Join-Path $projectRoot 'artifacts\android\Vishal-Jarvis-1.2.0-private.apk'
+$apk = Join-Path $projectRoot 'artifacts\android\Vishal-Jarvis-1.3.0-private.apk'
 & (Join-Path $toolsRoot 'apksigner.bat') sign --ks $keyStore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out $apk $aligned
 if ($LASTEXITCODE -ne 0) { throw 'APK signing failed.' }
 & (Join-Path $toolsRoot 'apksigner.bat') verify --verbose $apk

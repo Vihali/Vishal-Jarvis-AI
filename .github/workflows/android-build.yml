@@ -151,7 +151,7 @@ jobs:
       - name: Verify APK
         shell: pwsh
         run: |
-          $apk = Join-Path (Get-Location) "artifacts/android/Vishal-Jarvis-1.2.0-private.apk"
+          $apk = Join-Path (Get-Location) "artifacts/android/Vishal-Jarvis-1.3.0-private.apk"
 
           if (!(Test-Path $apk)) {
             throw "APK file was not generated."
@@ -163,7 +163,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Vishal-Jarvis-APK
-          path: app-source/artifacts/android/Vishal-Jarvis-1.2.0-private.apk
+          path: app-source/artifacts/android/Vishal-Jarvis-1.3.0-private.apk
           if-no-files-found: error
 
       - name: Package source ZIP
@@ -208,7 +208,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          TAG: v1.2.0
+          TAG: v1.3.0
         run: |
           set -euo pipefail
           APK_PATH=$(find dist -type f -name '*.apk' -print -quit)
@@ -217,14 +217,25 @@ jobs:
           echo "Publishing $APK_NAME"
 
           cat > release-notes.md <<EOF
-          Vishal Jarvis for Android **1.2.0** — a substantial agent upgrade.
+          Vishal Jarvis for Android **1.3.0** — the agent now finishes the job itself.
 
-          ### What is new
-          - **Typed chat can now act on your phone.** It streams its answer and runs Android actions through Gemini function calling (up to four steps per request).
-          - **23 device actions:** open apps, open https links, YouTube/web search, WhatsApp and SMS drafts, dialer and saved-contact calls, flashlight, Wi-Fi and 13 system panels, alarms, timers, calendar, Maps, share sheet, clipboard, media keys, media volume, battery/network/storage status, installed-app list, camera.
-          - **Long-term memory:** "remember that …" stores one short fact locally (max 30). Passwords, OTPs and keys are refused.
-          - **Faster, clearer UI:** streaming replies, per-message copy/read/retry, conversation search, transcript copy/share, quick-action chips, permission manager, light/dark themes.
-          - **Same safety rules:** calls only open the dialer, messages stay drafts you send, system switches open their own panel. No screen capture, notification reading or file access.
+          ### Direct calling
+          - The agent **places the call**, not just the dialer. "রাহুল কে কল করো" or "call +91…" starts the call immediately.
+          - **Dual-SIM:** when the phone has more than one SIM, the agent asks which one ("SIM 1 Airtel, SIM 2 Jio — which?") and then calls from that SIM. It never guesses.
+          - Needs the **Phone** permission; the SIM list needs phone state access.
+          - It reports `call_started`, which means Android began dialling — not that the other side answered.
+
+          ### Direct sending
+          - WhatsApp, **Telegram, Instagram, Messenger and SMS** — the agent opens the exact chat, writes your text and **presses Send**.
+          - Two steps, always: the agent repeats the recipient and the exact text, you say "send", and only then does it send. "cancel" discards it.
+          - Direct sending in chat apps uses an **Accessibility service** ("Vishal Jarvis message sender") that you enable yourself in Android Settings → Accessibility. It is scoped to WhatsApp, WhatsApp Business, Telegram, Instagram and Messenger; nothing else on your phone is readable through it.
+          - Statuses are honest: `sent` (composer emptied after Send), `sent_unverified` (Send pressed, confirmation not readable), `sms_queued` / `sms_delivered_to_network` (Android accepted the SMS), `failed`, `permission_required`.
+
+          ### Everything from 1.2.0 is still here
+          - Typed chat acts on your phone through Gemini function calling (up to four steps per request), live voice shares the same tools.
+          - 22 actions: open apps, https links, YouTube/web search, calls, messages, SIM info, flashlight, Wi-Fi and 13 system panels, alarms, timers, calendar, Maps, share sheet, clipboard, media keys, volume, device status, app list, camera.
+          - Long-term memory (max 30 short facts), streaming replies, permission manager, light/dark themes.
+          - Still no screen capture, no notification reading, no file access, and no silent background sending.
 
           ### Direct APK download
           https://github.com/$REPO/releases/download/$TAG/$APK_NAME
@@ -244,10 +255,10 @@ jobs:
           EOF
 
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$REPO" --title "Vishal Jarvis for Android 1.2.0" --notes-file release-notes.md
+            gh release edit "$TAG" --repo "$REPO" --title "Vishal Jarvis for Android 1.3.0" --notes-file release-notes.md
           else
             gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" \
-              --title "Vishal Jarvis for Android 1.2.0" --notes-file release-notes.md --prerelease
+              --title "Vishal Jarvis for Android 1.3.0" --notes-file release-notes.md --latest
           fi
 
           gh release upload "$TAG" "$APK_PATH" --repo "$REPO" --clobber

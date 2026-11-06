@@ -20,19 +20,28 @@ import android.provider.CalendarContract;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.provider.ContactsContract.CommonDataKinds.Phone;
+import android.telecom.PhoneAccount;
+import android.telecom.PhoneAccountHandle;
+import android.telecom.TelecomManager;
 import android.telephony.*;
 import android.view.KeyEvent;
 import org.json.*;
 import java.util.*;
 
-/** Bounded Android intents for the Vishal Jarvis agent.
- *  Every action either opens a system UI the user confirms or performs a
- *  narrowly scoped, reversible device change. No accessibility, no arbitrary
- *  URLs, no shell, no silent messaging, no file or screen access. */
+/** Bounded Android intents and direct device actions for the Vishal Jarvis agent.
+ *
+ *  Direct actions (calls, SMS, third-party chat sends) are permission-gated, always
+ *  preceded by the user's explicit instruction, and report only what actually happened.
+ *  There is no accessibility access outside MessageAutomationService, no shell, no
+ *  arbitrary URL intent and no silent background sending. */
 public final class MobileActions {
   public static final int CONTACTS_REQUEST=88;
   public static final int TORCH_REQUEST=89;
+  public static final int PHONE_REQUEST=91;
   private static final int MAX_APPS=150;
+  private static final long PENDING_TTL=5*60*1000L;
+  private static final String SMS_RECEIPT="com.myraa.mobile.SMS_RECEIPT";
+
   public interface Result { void complete(String id,JSONObject result); }
   public interface Launcher { boolean installed(String pkg); Intent app(String label); boolean open(Intent intent); }
   public interface Contacts { boolean needsPermission(); List<Recipient> find(String name); }
@@ -50,7 +59,24 @@ public final class MobileActions {
   private Boolean pendingTorchState;
   private AlertDialog chooser;
   private String chooserId;
+  private JSONObject pendingSend;
   private final Map<String,JSONObject> completed=new LinkedHashMap<>();
+  private boolean permissionsGranted=false;
+  private final String smsToken=UUID.randomUUID().toString();
+  private boolean smsReceiverRegistered;
+  private final BroadcastReceiver smsReceiver=new BroadcastReceiver(){
+    @Override public void onReceive(Context context,Intent intent){
+      if(intent==null||!SMS_RECEIPT.equals(intent.getAction()))return;
+      if(!smsToken.equals(intent.getStringExtra("token")))return;
+      String id=intent.getStringExtra("id"),to=intent.getStringExtra("to");
+      if(id==null||to==null)return;
+      boolean ok=getResultCode()==Activity.RESULT_OK;
+      result.complete(id,status(ok?"sms_delivered_to_network":"sms_failed",ok
+        ?"SMS accepted by the network for +"+to+"."
+        :"Android could not send the SMS (code "+getResultCode()+"). Nothing was sent."));
+    }
+  };
+
   public MobileActions(Activity activity,Result result) {
     this(activity,result,new Launcher(){
       public boolean installed(String pkg){try{activity.getPackageManager().getPackageInfo(pkg,0);return true;}catch(Exception e){return false;}}
@@ -84,8 +110,15 @@ public final class MobileActions {
         return exact.isEmpty()?found:exact;
       }
     });
+    try {
+      IntentFilter filter=new IntentFilter(SMS_RECEIPT);
+      if(Build.VERSION.SDK_INT>=33)activity.registerReceiver(smsReceiver,filter,Context.RECEIVER_EXPORTED);
+      else activity.registerReceiver(smsReceiver,filter);
+      smsReceiverRegistered=true;
+    } catch(RuntimeException ignored){smsReceiverRegistered=false;}
   }
-  public MobileActions(Activity activity,Result result,Launcher launcher,Contacts contacts){this.activity=activity;this.result=result;this.launcher=launcher;this.contacts=contacts;}
+  /** Test seam: injected fakes run with permissions treated as granted. */
+  public MobileActions(Activity activity,Result result,Launcher launcher,Contacts contacts){this.activity=activity;this.result=result;this.launcher=launcher;this.contacts=contacts;this.permissionsGranted=true;}
   public static String normalize(String input){return input==null?"":input.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+"," ");}
   private static String international(String raw,Activity activity){
     if(raw==null)return null;String clean=raw.replaceAll("[ ()-]","");if(clean.startsWith("00"))clean="+"+clean.substring(2);
@@ -94,16 +127,22 @@ public final class MobileActions {
     if(country==null||country.length()!=2){String language=activity.getSharedPreferences("myraa.mobile.v1",0).getString("language","bn-IN");country=language.endsWith("IN")?"IN":"US";}
     String e164=PhoneNumberUtils.formatNumberToE164(raw,country.toUpperCase(Locale.ROOT));return e164==null?null:e164.substring(1);
   }
+  /** Digits only, no plus sign, using the device's country for local numbers. */
+  private static String numberDigits(String raw,Activity activity){
+    if(raw==null)return null;
+    String clean=raw.trim().replaceAll("[^0-9+]","");
+    if(clean.isEmpty())return null;
+    if(clean.startsWith("00"))clean="+"+clean.substring(2);
+    if(clean.matches("\\+[1-9][0-9]{7,14}"))return clean.substring(1);
+    if(clean.length()>=11&&clean.matches("[1-9][0-9]{7,14}"))return clean;
+    String e164=international(raw,activity);
+    return e164;
+  }
   public static Intent search(String target,String query){
     if(query==null||query.trim().isEmpty()||query.length()>1000)throw new IllegalArgumentException("Say what you want to search for.");
     Uri uri="youtube".equals(target)?Uri.parse("https://www.youtube.com/results").buildUpon().appendQueryParameter("search_query",query.trim()).build():Uri.parse("https://www.google.com/search").buildUpon().appendQueryParameter("q",query.trim()).build();
     return new Intent(Intent.ACTION_VIEW,uri).addCategory(Intent.CATEGORY_BROWSABLE);
   }
-  public static Intent draft(String phone,String message,String pkg){
-    if(phone==null||!phone.matches("[1-9][0-9]{7,14}")||message==null||message.trim().isEmpty()||message.length()>4000)throw new IllegalArgumentException("A valid recipient and message are required.");
-    return new Intent(Intent.ACTION_VIEW,Uri.parse("https://wa.me/"+phone).buildUpon().appendQueryParameter("text",message).build()).setPackage(pkg);
-  }
-  /** Only http(s) links with a real host, no embedded credentials, no local targets. */
   public static Intent web(String raw){
     if(raw==null)throw new IllegalArgumentException("Say which page to open.");
     String value=raw.trim();
@@ -122,7 +161,7 @@ public final class MobileActions {
     try{for(int i=0;i<values.length;i+=2)value.put(String.valueOf(values[i]),values[i+1]);}catch(JSONException ignored){}
     return value;
   }
-  private JSONObject status(String status,String message,JSONObject data){
+  private static JSONObject status(String status,String message,JSONObject data){
     JSONObject value=new JSONObject();
     try{value.put("status",status).put("message",message);if(data!=null)value.put("data",data);}catch(JSONException ignored){}
     return value;
@@ -132,6 +171,18 @@ public final class MobileActions {
   private void publish(String id,JSONObject value){
     completed.put(id,value);while(completed.size()>64)completed.remove(completed.keySet().iterator().next());result.complete(id,value);
   }
+  private boolean granted(String permission){return permissionsGranted||activity.checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED;}
+  private void requestCallPermission(String id,Runnable retry){
+    if(pending!=null||pendingTorchId!=null){finish(id,"busy","Finish the current permission request first.");return;}
+    pendingId=id;pending=retry;
+    activity.requestPermissions(new String[]{Manifest.permission.CALL_PHONE,Manifest.permission.READ_PHONE_STATE},PHONE_REQUEST);
+  }
+  private void requestSmsPermission(String id,Runnable retry){
+    if(pending!=null||pendingTorchId!=null){finish(id,"busy","Finish the current permission request first.");return;}
+    pendingId=id;pending=retry;
+    activity.requestPermissions(new String[]{Manifest.permission.SEND_SMS,Manifest.permission.READ_PHONE_STATE},PHONE_REQUEST);
+  }
+
   public void execute(String id,String name,String raw){
     if(id==null||!id.matches("[A-Za-z0-9-]{1,80}"))return;
     if(completed.containsKey(id)){result.complete(id,completed.get(id));return;}
@@ -146,10 +197,10 @@ public final class MobileActions {
         finish(id,opened?"opened":"unavailable",opened?(youtube?"YouTube":"Browser")+" search opened.":"No app can open this search on this device.");return;
       }
       if("open_url".equals(action)){openUrl(id,args.optString("url"));return;}
-      if("whatsapp_message".equals(action)){message(id,args.optString("recipient"),args.optString("message"),false);return;}
-      if("send_sms".equals(action)){message(id,args.optString("recipient"),args.optString("message"),true);return;}
-      if("call_number".equals(action)){dial(id,args.optString("phone"));return;}
-      if("call_contact".equals(action)){callContact(id,args.optString("recipient"));return;}
+      if("call".equals(action)){call(id,args.optString("recipient"),args.optString("sim"));return;}
+      if("send_message".equals(action)){sendMessage(id,args);return;}
+      if("cancel_send".equals(action)){cancelSend(id);return;}
+      if("sim_info".equals(action)){simInfo(id);return;}
       if("set_flashlight".equals(action)){setFlashlight(id,args.optBoolean("enabled",false));return;}
       if("open_wifi_settings".equals(action)){openWifiSettings(id);return;}
       if("open_settings_panel".equals(action)){openPanel(id,args.optString("panel"));return;}
@@ -164,41 +215,315 @@ public final class MobileActions {
       if("device_status".equals(action)){deviceStatus(id);return;}
       if("list_apps".equals(action)){listApps(id);return;}
       if("open_camera".equals(action)){openCamera(id);return;}
-      finish(id,"unsupported","Supported actions: open apps, open a web page, search YouTube/web, WhatsApp and SMS drafts, dial a number or saved contact, flashlight, Wi-Fi and system panels, alarms, timers, calendar events, navigation, share, copy, media and volume control, device status and installed apps.");
+      finish(id,"unsupported","Supported actions: open apps, open a web page, search YouTube/web, call a number or saved contact (direct call, optional SIM), send WhatsApp/Telegram/Instagram/Messenger/SMS messages after confirmation, flashlight, Wi-Fi and system panels, alarms, timers, calendar events, navigation, share, copy, media and volume control, device status, SIM info and installed apps.");
     }catch(IllegalArgumentException e){finish(id,"invalid",e.getMessage());}catch(Exception e){finish(id,"failed","Android could not complete this action. Nothing was sent.");}
   }
+
+  // ---------------------------------------------------------------- direct calls
+
+  private void call(String id,String recipient,String sim){
+    String value=recipient==null?"":recipient.trim();
+    if(value.isEmpty()||value.length()>100){finish(id,"invalid","Whom should I call? Give a saved name or a phone number.");return;}
+    String digits=numberDigits(value,activity);
+    if(digits!=null){placeCall(id,digits,value,sim);return;}
+    if(contacts.needsPermission()&&!granted(Manifest.permission.READ_CONTACTS)){
+      if(pending!=null||pendingTorchId!=null){finish(id,"busy","Finish the current permission request first.");return;}
+      pendingId=id;pending=()->call(id,recipient,sim);
+      activity.requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_REQUEST);return;
+    }
+    List<Recipient> matches=contacts.find(value);
+    if(matches.isEmpty()){finish(id,"not_found","No contact with a phone number matches “"+value+"”. Say the full saved name or the number itself.");return;}
+    if(matches.size()==1){placeCall(id,matches.get(0).phone,matches.get(0).name,sim);return;}
+    if(chooser!=null){finish(id,"busy","Choose the contact from the current list first.");return;}
+    String[] labels=new String[matches.size()];for(int i=0;i<labels.length;i++)labels[i]=matches.get(i).name+" · +"+matches.get(i).phone;
+    chooserId=id;chooser=new AlertDialog.Builder(activity).setTitle("কাকে কল করবে — "+value+"?").setItems(labels,(d,index)->{chooser=null;placeCall(id,matches.get(index).phone,matches.get(index).name,sim);})
+      .setNegativeButton("বাতিল",(d,w)->{chooser=null;finish(id,"cancelled","Call cancelled. Nobody was called.");})
+      .setOnCancelListener(d->{chooser=null;finish(id,"cancelled","Call cancelled. Nobody was called.");}).show();
+  }
+
+  private void placeCall(String id,String digits,String label,String sim){
+    if(!granted(Manifest.permission.CALL_PHONE)){requestCallPermission(id,()->placeCall(id,digits,label,sim));return;}
+    List<PhoneAccountHandle> accounts=callAccounts();
+    PhoneAccountHandle handle=null;
+    int choice=simIndex(sim);
+    if(accounts.size()>1){
+      if(choice<1){
+        finish(id,"needs_sim","This phone has "+accounts.size()+" SIMs: "+simLabels(accounts)+". Which SIM should I call from?",json("sims",simArray(accounts)));
+        return;
+      }
+      handle=accounts.get(Math.min(choice,accounts.size())-1);
+    }else if(accounts.size()==1){
+      handle=accounts.get(0);
+    }
+    try{
+      Intent intent=new Intent(Intent.ACTION_CALL,Uri.fromParts("tel","+"+digits,null));
+      if(handle!=null)intent.putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE,handle);
+      boolean placed=launcher.open(intent);
+      if(placed){
+        String simNote=accounts.size()>1&&choice>0?" on SIM "+choice:"";
+        finish(id,"call_started","Calling "+label+simNote+". The call is being placed now.");
+      }else{
+        finish(id,"failed","Android did not start the call. Check the Phone permission and that a dialer app exists.");
+      }
+    }catch(SecurityException e){
+      finish(id,"permission_required","Allow the Phone permission for Vishal Jarvis so it can place calls directly.");
+    }catch(RuntimeException e){
+      finish(id,"failed","Android did not start the call. Nothing was dialled.");
+    }
+  }
+
+  private int simIndex(String sim){
+    String value=normalize(sim);
+    if(value.isEmpty()||value.equals("default")||value.equals("any")||value.equals("auto"))return -1;
+    String digits=value.replaceAll("[^0-9]","");
+    if(digits.isEmpty())return -1;
+    try{return Integer.parseInt(digits);}catch(NumberFormatException e){return -1;}
+  }
+
+  private List<PhoneAccountHandle> callAccounts(){
+    List<PhoneAccountHandle> accounts=new ArrayList<>();
+    if(!granted(Manifest.permission.READ_PHONE_STATE))return accounts;
+    try{
+      TelecomManager telecom=(TelecomManager)activity.getSystemService(Context.TELECOM_SERVICE);
+      if(telecom==null)return accounts;
+      List<PhoneAccountHandle> found=telecom.getCallCapablePhoneAccounts();
+      if(found!=null)accounts.addAll(found);
+    }catch(RuntimeException ignored){}
+    return accounts;
+  }
+
+  private String simLabels(List<PhoneAccountHandle> accounts){
+    StringBuilder text=new StringBuilder();
+    for(int i=0;i<accounts.size();i++){
+      if(i>0)text.append(", ");
+      text.append(i+1).append(") ").append(simLabel(accounts.get(i)));
+    }
+    return text.toString();
+  }
+
+  private String simLabel(PhoneAccountHandle handle){
+    try{
+      TelecomManager telecom=(TelecomManager)activity.getSystemService(Context.TELECOM_SERVICE);
+      PhoneAccount account=telecom.getPhoneAccount(handle);
+      if(account!=null){
+        CharSequence label=account.getLabel();
+        if(label!=null&&label.length()>0)return label.toString();
+      }
+    }catch(RuntimeException ignored){}
+    return "SIM "+(handle.getId()==null?"":handle.getId());
+  }
+
+  private JSONArray simArray(List<PhoneAccountHandle> accounts){
+    JSONArray array=new JSONArray();
+    for(int i=0;i<accounts.size();i++)array.put(json("sim",i+1,"label",simLabel(accounts.get(i))));
+    return array;
+  }
+
+  private void simInfo(String id){
+    if(!granted(Manifest.permission.READ_PHONE_STATE)){
+      requestCallPermission(id,()->simInfo(id));return;
+    }
+    List<PhoneAccountHandle> accounts=callAccounts();
+    if(accounts.isEmpty()){finish(id,"info","This phone reports no SIM accounts.",json("sims",new JSONArray()));return;}
+    finish(id,"info","This phone has "+accounts.size()+" SIM"+(accounts.size()==1?"":"s")+": "+simLabels(accounts)+".",json("sims",simArray(accounts)));
+  }
+
+  // ---------------------------------------------------------------- sending
+
+  private void sendMessage(String id,JSONObject args){
+    String app=normalize(args.optString("app","whatsapp"));
+    if(app.isEmpty())app="whatsapp";
+    String text=args.optString("text","").trim();
+    if(text.isEmpty()||text.length()>4000){finish(id,"invalid","Tell me the complete message to send.");return;}
+    if(args.optBoolean("confirm",false)){confirmSend(id);return;}
+    String recipient=args.optString("recipient","").trim();
+    if(recipient.isEmpty()||recipient.length()>100){finish(id,"invalid","Whom should I message? Give a saved name, a phone number or the app username.");return;}
+    prepareMessage(id,app,recipient,text,args.optString("sim"));
+  }
+
+  private void prepareMessage(String id,String app,String recipient,String text,String sim){
+    if(app.equals("sms")){
+      resolveTarget(id,recipient,new Target(){
+        public void use(String label,String key,String digits){
+          if(digits==null){finish(id,"not_found","That contact has no usable phone number.");return;}
+          storePending(id,app,label,key,digits,text,sim);
+        }
+      });
+      return;
+    }
+    if(app.equals("whatsapp")){
+      resolveTarget(id,recipient,new Target(){
+        public void use(String label,String key,String digits){
+          if(digits==null){finish(id,"not_found","That contact has no usable phone number. Give the full number with country code.");return;}
+          storePending(id,app,label,"+"+digits,digits,text,sim);
+        }
+      });
+      return;
+    }
+    String handle=recipient.replaceAll("^@","").trim();
+    if(!handle.matches("[A-Za-z0-9._]{2,32}")){
+      finish(id,"invalid","For "+appLabel(app)+" I need the exact username (for example @name), not a phone number.");
+      return;
+    }
+    storePending(id,app,"@"+handle,handle,null,text,sim);
+  }
+
+  private interface Target { void use(String label,String key,String digits); }
+
+  /** Accepts a phone number or resolves a saved contact name, asking when ambiguous. */
+  private void resolveTarget(String id,String recipient,Target target){
+    String digits=numberDigits(recipient,activity);
+    if(digits!=null){target.use(recipient,recipient,digits);return;}
+    if(contacts.needsPermission()&&!granted(Manifest.permission.READ_CONTACTS)){
+      if(pending!=null||pendingTorchId!=null){finish(id,"busy","Finish the current permission request first.");return;}
+      pendingId=id;pending=()->resolveTarget(id,recipient,target);
+      activity.requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_REQUEST);return;
+    }
+    List<Recipient> matches=contacts.find(recipient);
+    if(matches.isEmpty()){finish(id,"not_found","No contact with a phone number matches “"+recipient+"”. Give the full number with country code.");return;}
+    if(matches.size()==1){target.use(matches.get(0).name,matches.get(0).name,matches.get(0).phone);return;}
+    if(chooser!=null){finish(id,"busy","Choose the recipient from the current list first.");return;}
+    String[] labels=new String[matches.size()];for(int i=0;i<labels.length;i++)labels[i]=matches.get(i).name+" · +"+matches.get(i).phone;
+    chooserId=id;chooser=new AlertDialog.Builder(activity).setTitle("Which "+recipient+"?").setItems(labels,(d,index)->{chooser=null;target.use(matches.get(index).name,matches.get(index).name,matches.get(index).phone);})
+      .setNegativeButton("Cancel",(d,w)->{chooser=null;finish(id,"cancelled","Cancelled. Nothing was sent.");})
+      .setOnCancelListener(d->{chooser=null;finish(id,"cancelled","Cancelled. Nothing was sent.");}).show();
+  }
+
+  private void storePending(String id,String app,String label,String key,String digits,String text,String sim){
+    pendingSend=json("app",app,"label",label,"key",key,"digits",digits==null?"":digits,"text",text,"sim",sim==null?"":sim,"at",System.currentTimeMillis());
+    String preview=text.length()>120?text.substring(0,120)+"…":text;
+    finish(id,"needs_confirmation","Ready to send to "+label+" on "+appLabel(app)+": “"+preview+"”. Say “send” to confirm, or “cancel”.",
+      json("pending",json("app",app,"label",label,"text",text)));
+  }
+
+  private void confirmSend(String id){
+    JSONObject pendingMessage=pendingSend;
+    if(pendingMessage==null){finish(id,"nothing_pending","There is no prepared message. Tell me whom to message and what to say first.");return;}
+    if(System.currentTimeMillis()-pendingMessage.optLong("at",0)>PENDING_TTL){
+      pendingSend=null;finish(id,"expired","That prepared message expired. Tell me the message again.");return;
+    }
+    String app=pendingMessage.optString("app"),label=pendingMessage.optString("label");
+    String text=pendingMessage.optString("text"),sim=pendingMessage.optString("sim");
+    String digits=pendingMessage.optString("digits"),key=pendingMessage.optString("key");
+    if(app.equals("sms")){pendingSend=null;sendSms(id,digits,label,text,sim);return;}
+    if(app.equals("whatsapp")){
+      String pkg=whatsapp();
+      if(pkg==null){finish(id,"not_installed","WhatsApp is not installed on this phone.");return;}
+      dispatchChat(id,app,pkg,label,"whatsapp://send?phone="+digits,text);return;
+    }
+    dispatchChat(id,app,chatPackage(app),label,chatDeepLink(app,key),text);
+  }
+
+  private String appLabel(String app){
+    if(app.equals("sms"))return "SMS";
+    if(app.equals("whatsapp"))return "WhatsApp";
+    if(app.equals("telegram"))return "Telegram";
+    if(app.equals("instagram"))return "Instagram";
+    if(app.equals("messenger"))return "Messenger";
+    return app;
+  }
+
+  private String chatPackage(String app){
+    if(app.equals("telegram"))return launcher.installed("org.telegram.messenger")?"org.telegram.messenger":"org.telegram.plus";
+    if(app.equals("instagram"))return "com.instagram.android";
+    if(app.equals("messenger"))return "com.facebook.orca";
+    return "";
+  }
+
+  private String chatDeepLink(String app,String handle){
+    if(app.equals("telegram"))return "tg://resolve?domain="+Uri.encode(handle);
+    if(app.equals("instagram"))return "https://ig.me/m/"+Uri.encode(handle);
+    if(app.equals("messenger"))return "https://m.me/"+Uri.encode(handle);
+    return null;
+  }
+
+  private void dispatchChat(String id,String app,String pkg,String label,String deepLink,String text){
+    if(pkg==null||pkg.isEmpty()||!launcher.installed(pkg)){finish(id,"not_installed",appLabel(app)+" is not installed on this phone.");return;}
+    MessageAutomationService service=MessageAutomationService.get();
+    if(service==null){
+      finish(id,"permission_required","To send directly in "+appLabel(app)+" I need the “Vishal Jarvis message sender” accessibility service. Enable it in Android Settings → Accessibility (Android may ask you to allow restricted settings first), then say “send” again.",json("needsAccessibility",true));
+      return;
+    }
+    final String appName=appLabel(app);
+    service.send(pkg,deepLink,label,text,(status,message)->{
+      if("sent".equals(status)){
+        pendingSend=null;
+        finish(id,"sent","Sent to "+label+" on "+appName+".");
+      }else if("sent_unverified".equals(status)){
+        pendingSend=null;
+        finish(id,"sent_unverified",message);
+      }else if("cancelled".equals(status)||"timeout".equals(status)||"busy".equals(status)){
+        finish(id,status,message);
+      }else{
+        finish(id,"failed",message);
+      }
+    });
+  }
+
+  private void sendSms(String id,String digits,String label,String text,String sim){
+    if(!granted(Manifest.permission.SEND_SMS)){requestSmsPermission(id,()->sendSms(id,digits,label,text,sim));return;}
+    try{
+      SmsManager manager=SmsManager.getDefault();
+      int subscription=subscriptionForSim(sim);
+      if(subscription>=0){
+        SmsManager picked=activity.getSystemService(SmsManager.class);
+        if(picked!=null&&Build.VERSION.SDK_INT>=31)manager=picked.createForSubscriptionId(subscription);
+        else if(Build.VERSION.SDK_INT>=22)manager=SmsManager.getSmsManagerForSubscriptionId(subscription);
+      }
+      Intent receipt=new Intent(SMS_RECEIPT).setPackage(activity.getPackageName())
+        .putExtra("token",smsToken).putExtra("id",id).putExtra("to",digits);
+      PendingIntent sent=PendingIntent.getBroadcast(activity,Math.abs((id+"sms").hashCode()),receipt,
+        PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+      ArrayList<String> parts=manager.divideMessage(text);
+      if(parts.size()>1){
+        ArrayList<PendingIntent> receipts=new ArrayList<>();
+        for(int i=0;i<parts.size();i++)receipts.add(sent);
+        manager.sendMultipartTextMessage("+"+digits,null,parts,receipts,null);
+      }else{
+        manager.sendTextMessage("+"+digits,null,text,sent,null);
+      }
+      String simNote=simIndex(sim)>0?" on SIM "+simIndex(sim):"";
+      finish(id,"sms_queued","SMS to "+label+simNote+" handed to Android to send.");
+    }catch(SecurityException e){
+      finish(id,"permission_required","Allow the SMS permission for Vishal Jarvis so it can send messages.");
+    }catch(RuntimeException e){
+      finish(id,"failed","Android refused the SMS. Nothing was sent.");
+    }
+  }
+
+  private int subscriptionForSim(String sim){
+    int index=simIndex(sim);
+    if(index<1||!granted(Manifest.permission.READ_PHONE_STATE))return -1;
+    try{
+      SubscriptionManager manager=(SubscriptionManager)activity.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+      if(manager==null)return -1;
+      List<SubscriptionInfo> active=manager.getActiveSubscriptionInfoList();
+      if(active==null||active.size()<index)return -1;
+      return active.get(index-1).getSubscriptionId();
+    }catch(RuntimeException ignored){return -1;}
+  }
+
+  private void cancelSend(String id){
+    boolean had=pendingSend!=null;
+    pendingSend=null;
+    if(MessageAutomationService.get()!=null)MessageAutomationService.get().cancel("Sending cancelled.");
+    finish(id,had?"cancelled":"nothing_pending",had?"Cancelled. Nothing was sent.":"There was nothing waiting to send.");
+  }
+  public void cancelPendingSend(){pendingSend=null;}
+
+  // ---------------------------------------------------------------- other actions
+
   private void openUrl(String id,String url){
     Intent intent=web(url);boolean opened=launcher.open(intent);
     finish(id,opened?"opened":"unavailable",opened?"Opened the link in your browser.":"No browser could open that link.");
   }
   private void openCamera(String id){
-    Intent intent=new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
-    boolean opened=launcher.open(intent);
+    boolean opened=launcher.open(new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA));
     finish(id,opened?"opened":"unavailable",opened?"Camera opened.":"This device has no camera app available.");
   }
-  private void callContact(String id,String recipient){
-    if(recipient==null||recipient.trim().isEmpty()||recipient.length()>100){finish(id,"invalid","যাঁকে কল করতে চাও, তাঁর সেভ করা নামটি বলো।");return;}
-    if(recipient.trim().matches("\\+?[0-9 ()-]+")){dial(id,recipient);return;}
-    if(contacts.needsPermission()&&activity.checkSelfPermission(Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED){
-      if(pending!=null||pendingTorchId!=null){finish(id,"busy","আগের অনুমতির কাজটি শেষ করো।");return;}
-      pendingId=id;pending=()->callContact(id,recipient);activity.requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_REQUEST);return;
-    }
-    List<Recipient> matches=contacts.find(recipient.trim());
-    if(matches.isEmpty()){finish(id,"not_found","এই নামে ফোন নম্বর-সহ কোনো Contact পেলাম না। Contacts permission চালু আছে কি না দেখো, অথবা পুরো নামটি বলো।");return;}
-    if(matches.size()==1){dialContact(id,matches.get(0));return;}
-    if(chooser!=null){finish(id,"busy","আগের Contact নির্বাচনটি আগে শেষ করো।");return;}
-    String[] labels=new String[matches.size()];for(int i=0;i<labels.length;i++)labels[i]=matches.get(i).name+" · +"+matches.get(i).phone;
-    chooserId=id;chooser=new AlertDialog.Builder(activity).setTitle("কাকে কল করবে — "+recipient+"?").setItems(labels,(d,index)->{chooser=null;dialContact(id,matches.get(index));})
-      .setNegativeButton("বাতিল",(d,w)->{chooser=null;finish(id,"cancelled","কল বাতিল করা হয়েছে।");}).setOnCancelListener(d->{chooser=null;finish(id,"cancelled","কল বাতিল করা হয়েছে।");}).show();
-  }
-  private void dialContact(String id,Recipient person){
-    try{boolean opened=launcher.open(new Intent(Intent.ACTION_DIAL,Uri.fromParts("tel","+"+person.phone,null)));
-      finish(id,opened?"dialer_opened":"unavailable",opened?person.name+"-এর নম্বর ডায়ালারে খুলেছি। নম্বরটি মিলিয়ে Call বোতাম চাপো।":"ডায়ালার খোলা যায়নি। কোনো কল করা হয়নি।");
-    }catch(Exception e){finish(id,"failed","ডায়ালার খোলা যায়নি। কোনো কল করা হয়নি।");}
-  }
   private void setFlashlight(String id,boolean enabled){
-    if(activity.checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){
-      if(pending!=null||pendingTorchId!=null){finish(id,"busy","আগের অনুমতির কাজটি শেষ করো।");return;}
+    if(!granted(Manifest.permission.CAMERA)){
+      if(pending!=null||pendingTorchId!=null){finish(id,"busy","Finish the current permission request first.");return;}
       pendingTorchId=id;pendingTorchState=enabled;activity.requestPermissions(new String[]{Manifest.permission.CAMERA},TORCH_REQUEST);return;
     }
     applyFlashlight(id,enabled);
@@ -327,10 +652,10 @@ public final class MobileActions {
       Intent battery=activity.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
       int level=battery==null?-1:battery.getIntExtra(BatteryManager.EXTRA_LEVEL,-1);
       int scale=battery==null?-1:battery.getIntExtra(BatteryManager.EXTRA_SCALE,-1);
-      int status=battery==null?0:battery.getIntExtra(BatteryManager.EXTRA_STATUS,BatteryManager.BATTERY_STATUS_UNKNOWN);
+      int state=battery==null?0:battery.getIntExtra(BatteryManager.EXTRA_STATUS,BatteryManager.BATTERY_STATUS_UNKNOWN);
       int percent=level>=0&&scale>0?(int)Math.round(level*100.0/scale):-1;
       data.put("batteryPercent",percent);
-      data.put("charging",status==BatteryManager.BATTERY_STATUS_CHARGING||status==BatteryManager.BATTERY_STATUS_FULL);
+      data.put("charging",state==BatteryManager.BATTERY_STATUS_CHARGING||state==BatteryManager.BATTERY_STATUS_FULL);
       ConnectivityManager cm=(ConnectivityManager)activity.getSystemService(Context.CONNECTIVITY_SERVICE);
       Network active=cm==null?null:cm.getActiveNetwork();NetworkCapabilities capabilities=active==null?null:cm.getNetworkCapabilities(active);
       String network="offline";
@@ -347,15 +672,17 @@ public final class MobileActions {
       AudioManager audio=(AudioManager)activity.getSystemService(Context.AUDIO_SERVICE);
       int max=audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
       data.put("mediaVolumePercent",max==0?0:(int)Math.round(audio.getStreamVolume(AudioManager.STREAM_MUSIC)*100.0/max));
+      data.put("sims",callAccounts().size());
       data.put("device",Build.MANUFACTURER+" "+Build.MODEL);
       data.put("android",Build.VERSION.RELEASE);
       data.put("sdk",Build.VERSION.SDK_INT);
-      data.put("appVersion","1.2.0");
+      data.put("appVersion","1.3.0");
       StringBuilder summary=new StringBuilder();
       summary.append("Battery ").append(percent<0?"unknown":percent+"%").append(data.optBoolean("charging")?", charging":"").append(". ");
       summary.append("Network: ").append(network).append(". ");
       summary.append("Free storage: ").append(data.opt("freeStorageMb")).append(" MB. ");
       summary.append("Media volume: ").append(data.opt("mediaVolumePercent")).append("%. ");
+      summary.append("SIMs: ").append(callAccounts().size()).append(". ");
       summary.append("Device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append(", Android ").append(Build.VERSION.RELEASE).append('.');
       finish(id,"info",summary.toString(),data);
     }catch(Exception e){finish(id,"failed","Android did not return device status.");}
@@ -382,16 +709,6 @@ public final class MobileActions {
     if(trimmed.isEmpty())return fallback;
     return trimmed.length()>max?trimmed.substring(0,max):trimmed;
   }
-  private void dial(String id,String raw){
-    String number=raw==null?"":raw.trim().replaceAll("[\\s()-]","");
-    if(number.startsWith("00")) number="+"+number.substring(2);
-    if(!number.matches("\\+?[0-9]{7,15}")){finish(id,"invalid","সঠিক ফোন নম্বরটি দেশের কোড-সহ বলুন।");return;}
-    try {
-      Intent intent=new Intent(Intent.ACTION_DIAL,Uri.fromParts("tel",number,null));
-      boolean opened=launcher.open(intent);
-      finish(id,opened?"dialer_opened":"unavailable",opened?"ফোনের ডায়ালার খুলেছি। নম্বরটি দেখে Call বোতাম চাপুন।":"এই ডিভাইসে ফোনের ডায়ালার খোলা যাচ্ছে না।");
-    } catch(Exception e){finish(id,"failed","ডায়ালার খোলা যায়নি। কোনো কল করা হয়নি।");}
-  }
   private void openApp(String id,String input){
     String app=normalize(input);if(app.isEmpty()||app.length()>100){finish(id,"invalid","Say which app to open.");return;}
     Intent intent=null;
@@ -406,7 +723,6 @@ public final class MobileActions {
     if(intent==null){finish(id,"not_installed","No installed app matches that name. Say the exact app name shown on your home screen.");return;}
     boolean opened=launcher.open(intent);finish(id,opened?"opened":"unavailable",opened?"Opened "+input+".":"Android could not open "+input+".");
   }
-  /** Common system apps and launcher categories when no labelled app matches. */
   private Intent systemApp(String app){
     String category=null;
     if(app.equals("phone")||app.equals("dialer")||app.equals("calls"))return new Intent(Intent.ACTION_DIAL);
@@ -427,37 +743,36 @@ public final class MobileActions {
     return activity.getPackageManager().resolveActivity(intent,0)==null?null:intent;
   }
   private String whatsapp(){return launcher.installed("com.whatsapp")?"com.whatsapp":launcher.installed("com.whatsapp.w4b")?"com.whatsapp.w4b":null;}
-  private void message(String id,String recipient,String text,boolean sms){
-    if(!sms&&whatsapp()==null){finish(id,"not_installed","WhatsApp is not installed on this Android device.");return;}
-    if(recipient==null||recipient.trim().isEmpty()||recipient.length()>100||text==null||text.trim().isEmpty()||text.length()>4000){finish(id,"invalid","Tell me the recipient and the complete message.");return;}
-    if(recipient.trim().matches("\\+?[0-9 ()-]+")){
-      String phone=recipient.replaceAll("[ ()+-]","");if(phone.startsWith("00"))phone=phone.substring(2);boolean international=recipient.trim().startsWith("+")||recipient.trim().startsWith("00")||phone.length()>=11;if(!international||!phone.matches("[1-9][0-9]{7,14}")){finish(id,"invalid","Include the country code in the recipient phone number, for example +91.");return;}
-      openDraft(id,new Recipient(recipient,phone),text,sms);return;
-    }
-    if(contacts.needsPermission()&&activity.checkSelfPermission(Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED){
-      if(pending!=null||pendingTorchId!=null){finish(id,"busy","Finish the current permission request first.");return;}
-      pendingId=id;pending=()->message(id,recipient,text,sms);activity.requestPermissions(new String[]{Manifest.permission.READ_CONTACTS},CONTACTS_REQUEST);return;
-    }
-    List<Recipient> matches=contacts.find(recipient.trim());
-    if(matches.isEmpty()){finish(id,"not_found","No matching contact with a usable phone number was found. Give the full saved name or an international phone number.");return;}
-    if(matches.size()==1){openDraft(id,matches.get(0),text,sms);return;}
-    if(chooser!=null){finish(id,"busy","Choose the recipient from the current list first.");return;}
-    String[] labels=new String[matches.size()];for(int i=0;i<labels.length;i++)labels[i]=matches.get(i).name+" · +"+matches.get(i).phone;
-    chooserId=id;chooser=new AlertDialog.Builder(activity).setTitle("Which "+recipient+"?").setItems(labels,(d,index)->{chooser=null;openDraft(id,matches.get(index),text,sms);})
-      .setNegativeButton("Cancel",(d,w)->{chooser=null;finish(id,"cancelled",sms?"Message cancelled. Nothing was sent.":"Message cancelled. Nothing was sent.");}).setOnCancelListener(d->{chooser=null;finish(id,"cancelled","Message cancelled. Nothing was sent.");}).show();
+
+  // ---------------------------------------------------------------- permissions / lifecycle
+
+  public void permissionResult(){
+    Runnable retry=pending;String id=pendingId;pending=null;pendingId=null;if(retry==null)return;
+    if(granted(Manifest.permission.READ_CONTACTS))retry.run();
+    else finish(id,"permission_required","Contacts access was denied. Allow Contacts permission in Android app settings, then try again.");
   }
-  private void openDraft(String id,Recipient person,String text,boolean sms){
-    if(sms){
-      Intent intent=new Intent(Intent.ACTION_SENDTO,Uri.parse("smsto:+".concat(person.phone))).putExtra("sms_body",text);
-      boolean opened=launcher.open(intent);
-      finish(id,opened?"sms_draft_opened":"unavailable",opened?"SMS draft opened for "+person.name+". Review the message and tap Send in your messaging app; Vishal Jarvis has not sent it.":"No messaging app could open this SMS draft. Nothing was sent.");
-      return;
-    }
-    boolean opened=launcher.open(draft(person.phone,text,whatsapp()));
-    finish(id,opened?"draft_opened":"unavailable",opened?"WhatsApp draft opened for "+person.name+". Review it and tap Send in WhatsApp; Vishal Jarvis has not sent it.":"WhatsApp could not open this recipient. Nothing was sent.");
+  public void phonePermissionResult(){
+    Runnable retry=pending;String id=pendingId;pending=null;pendingId=null;if(retry==null)return;
+    retry.run();
   }
-  public void permissionResult(){Runnable retry=pending;String id=pendingId;pending=null;pendingId=null;if(retry==null)return;if(activity.checkSelfPermission(Manifest.permission.READ_CONTACTS)==PackageManager.PERMISSION_GRANTED)retry.run();else finish(id,"permission_required","Contacts access was denied. Allow Contacts permission in Android app settings, then try again.");}
-  public void torchPermissionResult(){String id=pendingTorchId;Boolean enabled=pendingTorchState;pendingTorchId=null;pendingTorchState=null;if(id==null||enabled==null)return;if(activity.checkSelfPermission(Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)applyFlashlight(id,enabled);else finish(id,"permission_required","Flashlight ব্যবহারের জন্য Camera permission অনুমতি দাও। Android Settings থেকে Vishal Jarvis-এর Camera permission চালু করে আবার চেষ্টা করো।");}
-  public void cancel(String id){if(id==null||!id.matches("[A-Za-z0-9-]{1,80}"))return;if(completed.containsKey(id))return;if(id.equals(pendingId)){pending=null;pendingId=null;}if(id.equals(pendingTorchId)){pendingTorchId=null;pendingTorchState=null;}if(id.equals(chooserId)&&chooser!=null){chooser.dismiss();chooser=null;chooserId=null;}finish(id,"cancelled","Action cancelled. Nothing was sent.");}
-  public void close(){pending=null;pendingId=null;pendingTorchId=null;pendingTorchState=null;if(chooser!=null){chooser.dismiss();chooser=null;}}
+  public void torchPermissionResult(){
+    String id=pendingTorchId;Boolean enabled=pendingTorchState;pendingTorchId=null;pendingTorchState=null;
+    if(id==null||enabled==null)return;
+    if(granted(Manifest.permission.CAMERA))applyFlashlight(id,enabled);
+    else finish(id,"permission_required","Flashlight ব্যবহারের জন্য Camera permission অনুমতি দাও।");
+  }
+  public void cancel(String id){
+    if(id==null||!id.matches("[A-Za-z0-9-]{1,80}"))return;
+    if(completed.containsKey(id))return;
+    if(id.equals(pendingId)){pending=null;pendingId=null;}
+    if(id.equals(pendingTorchId)){pendingTorchId=null;pendingTorchState=null;}
+    if(id.equals(chooserId)&&chooser!=null){chooser.dismiss();chooser=null;chooserId=null;}
+    finish(id,"cancelled","Action cancelled. Nothing was sent.");
+  }
+  public void close(){
+    pending=null;pendingId=null;pendingTorchId=null;pendingTorchState=null;
+    if(chooser!=null){chooser.dismiss();chooser=null;}
+    if(MessageAutomationService.get()!=null)MessageAutomationService.get().cancel("App closed. Nothing was sent.");
+    if(smsReceiverRegistered){try{activity.unregisterReceiver(smsReceiver);}catch(RuntimeException ignored){}smsReceiverRegistered=false;}
+  }
 }

@@ -2,10 +2,10 @@ export type MobileAction =
   | { action: 'open_app'; app: string }
   | { action: 'open_url'; url: string }
   | { action: 'search_youtube' | 'search_web'; query: string }
-  | { action: 'whatsapp_message'; recipient: string; message: string }
-  | { action: 'send_sms'; recipient: string; message: string }
-  | { action: 'call_number'; phone: string }
-  | { action: 'call_contact'; recipient: string }
+  | { action: 'call'; recipient: string; sim?: string }
+  | { action: 'send_message'; app: 'whatsapp' | 'telegram' | 'instagram' | 'messenger' | 'sms' | string; recipient: string; text: string; sim?: string; confirm?: boolean }
+  | { action: 'cancel_send' }
+  | { action: 'sim_info' }
   | { action: 'set_flashlight'; enabled: boolean }
   | { action: 'open_wifi_settings' }
   | { action: 'open_settings_panel'; panel: string }
@@ -17,23 +17,23 @@ export type MobileAction =
   | { action: 'device_status' }
   | { action: 'open_camera' };
 
-const ACTION_ENUM = ['open_app', 'open_url', 'search_youtube', 'search_web', 'whatsapp_message', 'send_sms',
-  'call_number', 'call_contact', 'set_flashlight', 'open_wifi_settings', 'open_settings_panel', 'set_alarm',
+const ACTION_ENUM = ['open_app', 'open_url', 'search_youtube', 'search_web', 'call', 'send_message',
+  'cancel_send', 'sim_info', 'set_flashlight', 'open_wifi_settings', 'open_settings_panel', 'set_alarm',
   'set_timer', 'create_event', 'navigate_to', 'share_text', 'copy_text', 'media_control', 'set_volume',
   'device_status', 'list_apps', 'open_camera'];
 
 /** Mirrors MobileTools.java so text chat and Live voice share one Android capability set. */
 export const MOBILE_TOOL = {
   name: 'mobile_action',
-  description: 'Work the user\'s Android phone through supported, reversible, user-confirmed actions: open installed apps, open an https page, search YouTube or the web, prepare WhatsApp or SMS drafts, dial a number or saved contact, toggle the flashlight, open Wi-Fi and system panels, set alarms and timers, open a calendar event editor, open Maps navigation, share text, copy to the clipboard, send media keys, change media volume, read device status, list installed apps, open the camera. Contacts are resolved locally on the device. Messages are drafts the user sends. Never invent success: report the returned status truthfully.',
+  description: 'Work the user\'s Android phone through supported actions: open installed apps, open an https page, search YouTube or the web, place a phone call directly (choosing the SIM when the phone has several), send a message directly in WhatsApp, Telegram, Instagram, Messenger or SMS, reveal the phone\'s SIMs, toggle the flashlight, open Wi-Fi and system panels, set alarms and timers, open a calendar event editor, open Maps navigation, share text, copy to the clipboard, send media keys, change media volume, read device status, list installed apps, open the camera. Contacts are resolved locally on the device. Sending is always two steps: prepare, then confirm with confirm=true. Never invent success: report the returned status truthfully.',
   parameters: { type: 'OBJECT', properties: {
     action: { type: 'STRING', enum: ACTION_ENUM, description: 'Which Android action to perform.' },
-    app: { type: 'STRING', description: 'App name as shown on the home screen, such as WhatsApp, YouTube, Chrome, Calculator. Only for open_app.' },
+    app: { type: 'STRING', description: 'For send_message: whatsapp, telegram, instagram, messenger or sms. For open_app: the app name as shown on the home screen, such as YouTube, Chrome, Calculator.' },
     url: { type: 'STRING', description: 'A complete https:// page address explicitly given or implied by the user. Only for open_url.' },
     query: { type: 'STRING', description: 'The exact search text the user asked for. Required for search_youtube and search_web.' },
-    recipient: { type: 'STRING', description: 'Saved contact name exactly as the user said it, or a full international phone number starting with + and country code. Contacts are resolved locally. Used by whatsapp_message, send_sms and call_contact.' },
-    message: { type: 'STRING', description: 'The complete message body the user asked to write. Ask for it if missing. Used by whatsapp_message and send_sms.' },
-    phone: { type: 'STRING', description: 'A phone number the user said explicitly, including country code. Only for call_number.' },
+    recipient: { type: 'STRING', description: 'Whom to call or message: a saved contact name exactly as the user said it, a full phone number with country code, or the exact @username for Telegram, Instagram or Messenger. Contacts are resolved locally on the device. Used by call and send_message.' },
+    sim: { type: 'STRING', description: 'Which SIM to use, "1" or "2", taken from the user\'s answer or from sim_info. Only send it after the user chose. Used by call and by send_message with app sms.' },
+    confirm: { type: 'BOOLEAN', description: 'false or omitted prepares the message and reports what would be sent; true actually presses Send. Only for send_message, and only after the user said send.' },
     enabled: { type: 'BOOLEAN', description: 'true turns the flashlight on, false turns it off. Only for set_flashlight.' },
     panel: { type: 'STRING', enum: ['wifi', 'bluetooth', 'sound', 'display', 'battery', 'location', 'apps', 'notifications', 'data', 'airplane', 'accessibility', 'nfc', 'home'], description: 'Which system settings panel to open. Only for open_settings_panel.' },
     hour: { type: 'INTEGER', description: 'Alarm hour on a 24-hour clock, 0-23. Only for set_alarm.' },
@@ -46,7 +46,7 @@ export const MOBILE_TOOL = {
     location: { type: 'STRING', description: 'Optional place for a calendar event.' },
     description: { type: 'STRING', description: 'Optional notes for a calendar event.' },
     destination: { type: 'STRING', description: 'Place or address to show in Maps. Only for navigate_to.' },
-    text: { type: 'STRING', description: 'Text to share or copy. Only for share_text and copy_text.' },
+    text: { type: 'STRING', description: 'The exact text: the message body for send_message (never shorten or rewrite it), or the text to share or copy.' },
     command: { type: 'STRING', enum: ['play_pause', 'next', 'previous'], description: 'Media key to send. Only for media_control.' },
     level: { type: 'INTEGER', description: 'Target media volume as a percentage, 0-100. Only for set_volume.' },
     direction: { type: 'STRING', enum: ['up', 'down'], description: 'Raise or lower media volume by one step. Only for set_volume when level is absent.' },
@@ -68,12 +68,12 @@ export function parseMobileAction(input: string): MobileAction | null {
   const digits = (value: string) => value.replace(/[০-৯]/g, d => String('০১২৩৪৫৬৭৮৯'.indexOf(d)));
   const text = digits(input.trim()).replace(/^(?:hey\s+)?(?:vishal\s+jarvis|vishal|roisal\s+jarvis|roisal|jarvis|myraa|myra|মায়া|মায়া)[,\s:]+/iu, '').replace(/^(?:please|can you|could you)\s+/i, '').trim();
   let call = /^(?:কল\s*(?:করো|কর|দাও)?|ফোন\s*করো|call(?:\s+to)?|dial)\s*[:,ঃ-]?\s*(?:এই\s+নম্বর(?:ে)?\s*)?([+0-9][0-9 ()-]{6,22})$/iu.exec(text) || /^([+0-9][0-9 ()-]{6,22})\s*(?:নম্বরে\s*)?(?:কল\s*করো|ফোন\s*করো)$/iu.exec(text);
-  if (call) return { action: 'call_number', phone: call[1].trim() };
+  if (call) return { action: 'call', recipient: call[1].trim() };
   if (/^(?:(?:ওয়াই|ওয়াই).?ফাই|wifi|wi-fi|ইন্টারনেট)(?:\s*(?:অন|চালু|on|enable))?\s*(?:করো|চালু করো|খোলো|open)?$/iu.test(text) || /^(?:(?:ওয়াই|ওয়াই).?ফাই|wifi|wi-fi)\s*(?:সেটিংস|settings)\s*(?:খোলো|open)?$/iu.test(text) || /^(?:turn\s+on\s+)?wi-?fi\s+(?:on|enable)$/i.test(text)) return { action: 'open_wifi_settings' };
   if (/^(?:ফ্ল্যাশ\s*লাইট|ফ্ল্যাশলাইট|টর্চ|torch|flashlight)\s*(?:অন|চালু|on|ওপেন|খোলো|open)(?:\s*করো)?$/iu.test(text) || /^(?:অন|চালু|ওপেন|open)\s*(?:করো\s*)?(?:ফ্ল্যাশ\s*লাইট|ফ্ল্যাশলাইট|টর্চ|torch|flashlight)$/iu.test(text) || /^turn\s+on\s+(?:the\s+)?flashlight$/i.test(text)) return { action: 'set_flashlight', enabled: true };
   if (/^(?:ফ্ল্যাশ\s*লাইট|ফ্ল্যাশলাইট|টর্চ|torch|flashlight)\s*(?:অফ|বন্ধ|off)(?:\s*করো)?$/iu.test(text) || /^(?:বন্ধ|অফ)\s*(?:করো\s*)?(?:ফ্ল্যাশ\s*লাইট|ফ্ল্যাশলাইট|টর্চ|torch|flashlight)$/iu.test(text) || /^turn\s+off\s+(?:the\s+)?flashlight$/i.test(text)) return { action: 'set_flashlight', enabled: false };
   let contactCall = /^(?:এই নাম্বারে থাকা )?(.+?)\s*(?:কে|কে)?\s*(?:কল|ফোন)\s*(?:করো|কর|দাও)$/iu.exec(text) || /^(?:কল|ফোন)\s*(?:করো|কর|দাও)\s+(.+?)(?:\s*কে)?$/iu.exec(text) || /^call\s+(.+)$/i.exec(text);
-  if (contactCall && contactCall[1].trim() && !/^[+0-9][0-9 ()+-]*$/.test(contactCall[1].trim())) return { action: 'call_contact', recipient: contactCall[1].trim().replace(/\s+নামে$/, '') };
+  if (contactCall && contactCall[1].trim() && !/^[+0-9][0-9 ()+-]*$/.test(contactCall[1].trim())) return { action: 'call', recipient: contactCall[1].trim().replace(/\s+নামে$/, '') };
   call = /^(?:কল\s*(?:করো|কর|দাও)|ফোন\s*করো|call|dial)$/iu.exec(text);
   if (call) return null;
   const alarm = /^(?:set\s+)?(?:an?\s+)?(?:alarm|অ্যালার্ম|আলার্ম|এলার্ম)\s*(?:for|at|টি)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm|এএম|পিএম)?$/iu.exec(text)
@@ -105,8 +105,8 @@ export function parseMobileAction(input: string): MobileAction | null {
   if (match) return { action: 'search_youtube', query: match[1].trim() };
   match = /^(?:open\s+)?(?:chrome|google chrome|browser)(?:\s+and)?\s+search(?:\s+for)?\s+(.+)$/i.exec(text) || /^search(?:\s+for)?\s+(.+?)\s+(?:on|in)\s+(?:chrome|google|browser)$/i.exec(text);
   if (match) return { action: 'search_web', query: match[1].trim() };
-  match = /^(?:message|msg|text)\s+(.+?)\s+(?:on|using)\s+(?:whatsapp|wp|wa)\s*:\s*(.+)$/is.exec(text) || /^(?:whatsapp|wp|wa)\s+(?:message|msg)(?:\s+to)?\s+(.+?)\s*:\s*(.+)$/is.exec(text);
-  if (match) return { action: 'whatsapp_message', recipient: match[1].trim(), message: match[2].trim() };
+  match = /^(?:send\s+)?(?:message|msg|text)\s+(.+?)\s+(?:on|using|to)\s+(?:whatsapp|wp|wa)\s*[:,]\s*(.+)$/is.exec(text) || /^(?:whatsapp|wp|wa)\s+(?:message|msg)(?:\s+to)?\s+(.+?)\s*:\s*(.+)$/is.exec(text);
+  if (match) return { action: 'send_message', app: 'whatsapp', recipient: match[1].trim(), text: match[2].trim() };
   const openText = text.replace(/[.!?।]+$/u, '');
   match = /^(?:open|launch)\s+([\p{L}\p{N}][\p{L}\p{N} ._-]{0,79})$/iu.exec(openText) || /^(whatsapp|wp|wa|youtube|chrome)\s+(?:kholo|khol do|open karo)$/i.exec(openText);
   if (match && !/\band\b/i.test(match[1])) return { action: 'open_app', app: match[1].trim() };
@@ -121,10 +121,10 @@ export function describeAction(action: string, args: Record<string, unknown>): s
     case 'open_url': return 'Opening link';
     case 'search_youtube': return `Searching YouTube for “${first('query')}”`;
     case 'search_web': return `Searching the web for “${first('query')}”`;
-    case 'whatsapp_message': return `Drafting WhatsApp to ${first('recipient')}`;
-    case 'send_sms': return `Drafting SMS to ${first('recipient')}`;
-    case 'call_number': return `Opening dialer for ${first('phone')}`;
-    case 'call_contact': return `Calling ${first('recipient')}`;
+    case 'call': return `Calling ${first('recipient')}${first('sim') ? ` on SIM ${first('sim')}` : ''}`;
+    case 'send_message': return `${args.confirm ? 'Sending' : 'Preparing'} ${String(args.app || 'a message').toUpperCase()} to ${first('recipient')}`;
+    case 'cancel_send': return 'Cancelling the prepared message';
+    case 'sim_info': return 'Reading the phone SIMs';
     case 'set_flashlight': return args.enabled ? 'Turning the flashlight on' : 'Turning the flashlight off';
     case 'open_wifi_settings': return 'Opening Internet settings';
     case 'open_settings_panel': return `Opening ${first('panel')} settings`;

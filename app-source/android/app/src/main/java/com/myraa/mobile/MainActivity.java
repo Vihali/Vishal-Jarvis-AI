@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.IntentFilter;
 import android.os.Build;
@@ -44,6 +45,7 @@ public class MainActivity extends Activity {
   private volatile HttpsURLConnection liveConnection;
   private String pendingLiveId;
   private static final int PERMISSION_REQUEST = 90;
+  private boolean lastAccessibility = false;
   private static final int MAX_TOOL_ROUNDS = 4;
   private static final int MAX_CALLS_PER_ROUND = 4;
   private static final int MAX_HISTORY_TURNS = 40;
@@ -196,11 +198,14 @@ public class MainActivity extends Activity {
       "contacts", granted(Manifest.permission.READ_CONTACTS),
       "camera", granted(Manifest.permission.CAMERA),
       "notifications", Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS),
-      "overlay", Settings.canDrawOverlays(this));
+      "overlay", Settings.canDrawOverlays(this),
+      "phone", granted(Manifest.permission.CALL_PHONE),
+      "sms", granted(Manifest.permission.SEND_SMS),
+      "accessibility", MessageAutomationService.available());
     JSONObject value = json("model", prefs.getString("model", "gemini-3.5-flash"), "quality", prefs.getString("quality", "low"),
       "language", prefs.getString("language", "bn-IN"), "spokenReplies", prefs.getBoolean("spokenReplies", false),
       "keyConfigured", prefs.contains("keyCipher"), "keyVerified", prefs.getLong("keyVerifiedAt", 0) > 0 && prefs.getString("verifiedModel", "").equals(prefs.getString("model", "gemini-3.5-flash")),
-      "providerErrorCode", prefs.getString("providerErrorCode", ""), "ttsAvailable", ttsReady, "version", "1.2.0",
+      "providerErrorCode", prefs.getString("providerErrorCode", ""), "ttsAvailable", ttsReady, "version", "1.3.0",
       "floatingControlsAllowed", Settings.canDrawOverlays(this), "liveModel", prefs.getString("liveModel", "gemini-3.1-flash-live-preview"),
       "permissions", permissions, "memory", memoryArray());
 
@@ -331,7 +336,7 @@ public class MainActivity extends Activity {
       runOnUiThread(()->{
         if(!foreground&&!LiveVoiceService.overlayVisible){emit(json("type","mobile-action-result","id",id,"result",json("status","permission_required","message","Return to Vishal Jarvis or enable Floating voice controls in Settings to switch apps by voice while Vishal Jarvis is behind another app.")));return;}
         try {
-          if(!foreground&&"whatsapp_message".equals(new JSONObject(args).optString("action"))){
+          if(!foreground&&"send_message".equals(new JSONObject(args).optString("action"))){
             if(pendingUiAction!=null){emit(json("type","mobile-action-result","id",id,"result",json("status","busy","message","Finish the current recipient selection first.")));return;}
             pendingUiAction=()->mobileActions.execute(id,name,args);startActivity(new Intent(MainActivity.this,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));return;
           }
@@ -396,6 +401,26 @@ public class MainActivity extends Activity {
         else if ("contacts".equals(name)) { if (!granted(Manifest.permission.READ_CONTACTS)) needed.add(Manifest.permission.READ_CONTACTS); }
         else if ("camera".equals(name)) { if (!granted(Manifest.permission.CAMERA)) needed.add(Manifest.permission.CAMERA); }
         else if ("notifications".equals(name)) { if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) needed.add(Manifest.permission.POST_NOTIFICATIONS); }
+        else if ("call".equals(name)) {
+          if (!granted(Manifest.permission.CALL_PHONE)) needed.add(Manifest.permission.CALL_PHONE);
+          if (!granted(Manifest.permission.READ_PHONE_STATE)) needed.add(Manifest.permission.READ_PHONE_STATE);
+        }
+        else if ("sms".equals(name)) {
+          if (!granted(Manifest.permission.SEND_SMS)) needed.add(Manifest.permission.SEND_SMS);
+          if (!granted(Manifest.permission.READ_PHONE_STATE)) needed.add(Manifest.permission.READ_PHONE_STATE);
+        }
+        else if ("accessibility".equals(name)) {
+          ComponentName sender = new ComponentName(MainActivity.this, MessageAutomationService.class);
+          Intent direct = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+          try { direct.putExtra(":settings:fragment_args_key", sender.flattenToString());
+            direct.putExtra(":settings:show_fragment_args", android.os.Bundle.EMPTY);
+          } catch (RuntimeException ignored) {}
+          try { startActivity(direct); }
+          catch (RuntimeException e) { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); }
+          emit(json("type", "permissions", "state", state(), "message",
+            "Enable “Vishal Jarvis message sender” in Accessibility so the agent can press Send itself."));
+          return;
+        }
         else if ("overlay".equals(name)) {
           if (!Settings.canDrawOverlays(MainActivity.this)) startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
           return;
@@ -690,6 +715,7 @@ public class MainActivity extends Activity {
     super.onRequestPermissionsResult(request, permissions, results);
     if (request == PERMISSION_REQUEST) { emit(json("type", "permissions", "state", state())); return; }
     if(request==MobileActions.CONTACTS_REQUEST){mobileActions.permissionResult();return;}
+    if(request==MobileActions.PHONE_REQUEST){mobileActions.phonePermissionResult();emit(json("type","permissions","state",state()));return;}
     if(request==MobileActions.TORCH_REQUEST){mobileActions.torchPermissionResult();return;}
     if (request != MICROPHONE_REQUEST || pendingLiveId == null) return;
     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -707,6 +733,7 @@ public class MainActivity extends Activity {
   @Override protected void onResume() {
     foreground=true;super.onResume();if(pendingUiAction!=null){Runnable action=pendingUiAction;pendingUiAction=null;action.run();}if(pendingLiveId!=null&&checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)provisionLive(pendingLiveId);
     if(web!=null){web.onResume();web.evaluateJavascript("window.dispatchEvent(new CustomEvent('myraa:lifecycle',{detail:{active:true,backgroundLive:"+allowBackgroundLive+"}}))",null);}
+    if(web!=null&&MessageAutomationService.available()!=lastAccessibility){lastAccessibility=MessageAutomationService.available();emit(json("type","permissions","state",state()));}
   }
   @Override protected void onStop(){super.onStop();if(!allowBackgroundLive&&pendingLiveId==null){cancelLive();if(web!=null)web.evaluateJavascript("window.dispatchEvent(new CustomEvent('myraa:lifecycle',{detail:{active:false}}))",null);}}
   @Override protected void onDestroy() {

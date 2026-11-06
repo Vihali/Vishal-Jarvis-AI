@@ -23,11 +23,12 @@ const cases: Case[] = [
   ['volume down', { action: 'set_volume', direction: 'down' }],
   ['next song', { action: 'media_control', command: 'next' }],
   ['open https://example.com/a?b=1', { action: 'open_url', url: 'https://example.com/a?b=1' }],
-  ['call +919876543210', { action: 'call_number', phone: '+919876543210' }],
-  ['রাহুল কে কল করো', { action: 'call_contact', recipient: 'রাহুল' }],
+  ['call +919876543210', { action: 'call', recipient: '+919876543210' }],
+  ['রাহুল কে কল করো', { action: 'call', recipient: 'রাহুল' }],
   ['open whatsapp', { action: 'open_app', app: 'whatsapp' }],
   ['youtube search cricket highlights', { action: 'search_youtube', query: 'cricket highlights' }],
-  ['message Rahul on whatsapp: কেমন আছো?', { action: 'whatsapp_message', recipient: 'Rahul', message: 'কেমন আছো?' }],
+  ['message Rahul on whatsapp: কেমন আছো?', { action: 'send_message', app: 'whatsapp', recipient: 'Rahul', text: 'কেমন আছো?' }],
+  ['send message Priya on whatsapp: kal dekha hobe', { action: 'send_message', app: 'whatsapp', recipient: 'Priya', text: 'kal dekha hobe' }],
   ['device status', { action: 'device_status' }],
   ['open camera', { action: 'open_camera' }],
   ['hello there', null],
@@ -57,8 +58,8 @@ for (const prose of ['আজ আবহাওয়া কেমন?', 'how are y
 }
 
 const declared = MOBILE_TOOL.parameters.properties.action.enum as string[];
-const javaMirror = ['open_app', 'open_url', 'search_youtube', 'search_web', 'whatsapp_message', 'send_sms', 'call_number',
-  'call_contact', 'set_flashlight', 'open_wifi_settings', 'open_settings_panel', 'set_alarm', 'set_timer', 'create_event',
+const javaMirror = ['open_app', 'open_url', 'search_youtube', 'search_web', 'call', 'send_message', 'cancel_send',
+  'sim_info', 'set_flashlight', 'open_wifi_settings', 'open_settings_panel', 'set_alarm', 'set_timer', 'create_event',
   'navigate_to', 'share_text', 'copy_text', 'media_control', 'set_volume', 'device_status', 'list_apps', 'open_camera'];
 if (JSON.stringify(declared) !== JSON.stringify(javaMirror)) {
   failed++;

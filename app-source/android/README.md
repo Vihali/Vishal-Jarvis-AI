@@ -1,4 +1,4 @@
-# Vishal Jarvis Android (v1.2.0)
+# Vishal Jarvis Android (v1.3.0)
 
 A standalone Android assistant. Native Java owns credentials, HTTPS, the agent loop,
 Android TTS, lifecycle and the device action engine. The bundled HTML/TypeScript UI
@@ -16,16 +16,22 @@ MainActivity
   ├─ long-term memory (max 30 short, user-approved facts)
   └─ Gemini Live token minting, TTS, lifecycle, permissions
 MobileTools       tool schema + system prompt (mirrored in src/mobile/actions.ts)
-MobileActions     bounded intent engine for 20+ device actions
+MobileActions     bounded intent engine for 22 device actions (direct calls, direct sends)
 GeminiAccess      metadata-only key checks and safe provider errors
 LiveVoiceService  foreground notification + floating stop chip
 ```
 
 Text chat and live voice share one capability set. Every action is either a system UI
-the user confirms (dialer, SMS/WhatsApp composer, alarm/timer/calendar editor, Maps,
-settings panel, share sheet) or a narrow reversible change (torch, media key, media
-volume, clipboard). There is no accessibility service, no arbitrary URL intent, no
-shell, no file or screen access.
+the user confirms (alarm/timer/calendar editor, Maps, settings panel, share sheet) or a
+narrow reversible change (torch, media key, media volume, clipboard), plus two actions the
+agent finishes itself: `call` (ACTION_CALL, with a user-chosen SIM via TelecomManager) and
+`send_message` (confirmed by the user, then pressed Send through MessageAutomationService).
+
+MessageAutomationService is the only accessibility surface: an opt-in AccessibilityService
+scoped by the user to WhatsApp/WhatsApp Business, Telegram, Instagram and Messenger. It
+fills the composer and clicks Send, keeps no history, and reports what it observed
+(`sent`, `sent_unverified`, `failed`, `timeout`, `cancelled`). There is no arbitrary URL
+intent, no shell, no notification reading and no file or screen access.
 
 ## Requirements
 
@@ -47,7 +53,7 @@ pwsh -NoProfile -File scripts/build-android.ps1 -SdkRoot 'C:\path\to\android-sdk
 
 The script runs Vite, javac, D8, AAPT2, zipalign and apksigner. Output:
 
-`artifacts/android/Vishal-Jarvis-1.2.0-private.apk`
+`artifacts/android/Vishal-Jarvis-1.3.0-private.apk`
 
 Install with `adb install -r <apk-path>` or copy the APK to the phone and install it.
 The development package ID remains `com.myraa.mobile` for compatibility with the

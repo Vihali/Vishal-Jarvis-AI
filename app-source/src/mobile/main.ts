@@ -6,7 +6,7 @@ import { RobotCharacter } from './RobotCharacter';
 import { parseCharacterCommand } from '../../shared/character/commands';
 
 interface MemoryFact { id: string; text: string; at: number }
-interface PermissionState { microphone: boolean; contacts: boolean; camera: boolean; notifications: boolean; overlay: boolean }
+interface PermissionState { microphone: boolean; contacts: boolean; camera: boolean; notifications: boolean; overlay: boolean; phone?: boolean; sms?: boolean; accessibility?: boolean }
 interface Turn { role: string; text: string; at?: number }
 interface AppState {
   history: Turn[]; model: string; liveModel?: string; quality: string; language: string;
@@ -29,7 +29,7 @@ declare global {
 }
 
 const bridge = window.MyraaNative;
-const fallbackState: AppState = { history: [], model: 'gemini-3.5-flash', quality: 'low', language: 'bn-IN', keyConfigured: false, memory: [], permissions: { microphone: false, contacts: false, camera: false, notifications: false, overlay: false } };
+const fallbackState: AppState = { history: [], model: 'gemini-3.5-flash', quality: 'low', language: 'bn-IN', keyConfigured: false, memory: [], permissions: { microphone: false, contacts: false, camera: false, notifications: false, overlay: false, phone: false, sms: false, accessibility: false } };
 let state: AppState = bridge ? JSON.parse(bridge.getState()) : fallbackState;
 
 let system: RobotCharacter | null = null;
@@ -380,6 +380,9 @@ function renderMemory() {
 const PERMISSIONS: Array<{ key: keyof PermissionState; label: string; why: string }> = [
   { key: 'microphone', label: 'Microphone', why: 'Live voice calls' },
   { key: 'contacts', label: 'Contacts', why: 'Message and call people by name' },
+  { key: 'phone', label: 'Phone', why: 'Place calls directly and pick the SIM' },
+  { key: 'sms', label: 'SMS', why: 'Send text messages directly' },
+  { key: 'accessibility', label: 'Direct sending in chat apps', why: 'Presses Send in WhatsApp, Telegram, Instagram and Messenger' },
   { key: 'camera', label: 'Camera', why: 'Flashlight control' },
   { key: 'notifications', label: 'Notifications', why: 'Keep live voice running' },
   { key: 'overlay', label: 'Floating controls', why: 'Switch apps during a call' },
@@ -396,7 +399,7 @@ function renderPermissions() {
     const text = document.createElement('div');
     text.innerHTML = `<strong>${entry.label}</strong><small>${entry.why}</small>`;
     const button = document.createElement('button');
-    button.textContent = granted ? 'Allowed' : 'Allow';
+    button.textContent = granted ? 'Allowed' : entry.key === 'accessibility' ? 'Enable' : 'Allow';
     button.disabled = granted;
     button.onclick = () => bridge?.requestPermission(entry.key);
     item.append(text, button);
@@ -515,7 +518,7 @@ window.MyraaEvents = event => {
   }
   if (event.type === 'tool-result') {
     const result = event.result || {};
-    const good = ['opened', 'dialer_opened', 'draft_opened', 'sms_draft_opened', 'settings_opened', 'torch_changed', 'alarm_opened', 'timer_opened', 'event_opened', 'navigated', 'shared', 'copied', 'media_sent', 'volume_changed', 'info', 'apps', 'saved'].includes(result.status);
+    const good = ['opened', 'settings_opened', 'torch_changed', 'alarm_opened', 'timer_opened', 'event_opened', 'navigated', 'shared', 'copied', 'media_sent', 'volume_changed', 'info', 'apps', 'saved', 'call_started', 'sent', 'sent_unverified', 'sms_queued', 'sms_delivered_to_network'].includes(result.status);
     activity(result.message || (good ? 'Done.' : 'Not completed.'), good ? 'done' : 'warn', false);
     return;
   }

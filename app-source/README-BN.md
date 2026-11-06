@@ -1,8 +1,22 @@
-# Vishal Jarvis — Android App Source (v1.2.0)
+# Vishal Jarvis — Android App Source (v1.3.0)
 
-এই ZIP-এ Android-এ চালানোর জন্য Vishal Jarvis-এর সম্পূর্ণ source code রয়েছে। v1.2.0-এ অ্যাপটি শুধু "chat + voice" থেকে একটি সত্যিকারের **Android AI agent**-এ উন্নীত করা হয়েছে: লেখা চ্যাটেও এখন ফোনের কাজ করতে পারে, উত্তর stream হয়, দীর্ঘমেয়াদি memory থাকে এবং অ্যাকশনের সংখ্যা অনেক বেড়েছে।
+এই ZIP-এ Android-এ চালানোর জন্য Vishal Jarvis-এর সম্পূর্ণ source code রয়েছে। v1.3.0-এ এজেন্ট এখন কাজটা **নিজেই শেষ করে**: নিজে ফোন করে (একাধিক SIM থাকলে জিজ্ঞেস করে), আর WhatsApp/Telegram/Instagram/Messenger/SMS-এ মেসেজ নিজে পাঠিয়ে দেয়।
 
-## v1.2.0-এ নতুন কী
+## v1.3.0-এ নতুন কী
+
+### এজেন্ট নিজে কল করে
+- "রাহুল কে কল করো" বা "call +91…" বললেই এজেন্ট **নিজে কল শুরু করে** — শুধু dialer খোলে না।
+- **ডুয়াল SIM:** ফোনে একাধিক SIM থাকলে এজেন্ট জিজ্ঞেস করে — "SIM 1 Airtel, SIM 2 Jio — কোনটা?" — তারপর সেই SIM দিয়ে কল করে। অনুমান করে না।
+- দরকার: **Phone** permission (SIM তালিকার জন্য phone state access)।
+- ফলাফলে `call_started` মানে Android ডায়াল শুরু করেছে; ওপাশে ফোন ধরেছে এমন দাবি করে না।
+
+### এজেন্ট নিজে মেসেজ পাঠায়
+- WhatsApp, **Telegram, Instagram, Messenger এবং SMS** — এজেন্ট নির্দিষ্ট chat খোলে, লেখাটা বসায়, এবং **Send চেপে দেয়**।
+- দুই ধাপে: আগে এজেন্ট প্রাপক ও হুবহু লেখাটা বলে, আপনি "send" বললে তবেই পাঠায়; "cancel" বললে বাতিল।
+- chat অ্যাপে সরাসরি পাঠাতে একটি **Accessibility service** ("Vishal Jarvis message sender") লাগে, যা আপনি নিজে Android Settings → Accessibility থেকে চালু করবেন। এটা শুধু WhatsApp, WhatsApp Business, Telegram, Instagram ও Messenger-এ সীমিত — বাকি কিছু পড়তে পারে না।
+- ফলাফল সৎভাবে জানায়: `sent` (Send চাপার পর composer খালি হয়েছে), `sent_unverified` (Send চাপা হয়েছে কিন্তু নিশ্চিত করা যায়নি), `sms_delivered_to_network` (Android SMS নিয়েছে), `failed`, `permission_required`।
+
+## v1.2.0-এ যা এসেছিল
 
 ### এজেন্ট এখন লেখা চ্যাটেও কাজ করে
 - আগে শুধু Live voice-এ tool call ছিল; এখন **text chat-ও** Gemini function calling দিয়ে ফোনের কাজ করে (open app, search, message draft, alarm, timer, volume, ইত্যাদি)।
@@ -16,8 +30,9 @@
 | `open_app` | ইনস্টল করা যেকোনো অ্যাপের নাম ধরে খোলে | শুধু লঞ্চার activity |
 | `open_url` | https লিংক ব্রাউজারে খোলে | শুধু http(s), credential/localhost ব্লক |
 | `search_youtube` / `search_web` | YouTube বা ব্রাউজার search | query encode করা |
-| `whatsapp_message` / `send_sms` | message **draft** খোলে | ইউজার নিজে Send চাপে |
-| `call_number` / `call_contact` | dialer খোলে (নাম local contacts থেকে) | কল নিজে করে না |
+| `call` | **নিজে কল করে** (নাম local contacts থেকে, একাধিক SIM থাকলে জিজ্ঞেস করে) | Phone permission; `call_started` ছাড়া কিছু দাবি করে না |
+| `send_message` | WhatsApp/Telegram/Instagram/Messenger/SMS-এ **নিজে পাঠায়** | আগে প্রস্তুত → "send" বললে তবেই; accessibility শুধু ওই ৫টি প্যাকেজে |
+| `cancel_send` / `sim_info` | প্রস্তুত মেসেজ বাতিল / ফোনের SIM তালিকা | কিছুই পাঠায় না |
 | `set_flashlight` | টর্চ on/off | Camera permission |
 | `open_wifi_settings` / `open_settings_panel` | Wi-Fi, Bluetooth, sound, display, battery, location, apps, notifications, data, airplane, accessibility, NFC, home | Android-এর নিয়মে সুইচ ইউজার নিজে চাপে |
 | `set_alarm` / `set_timer` | clock app-এর editor খোলে | ইউজার confirm করে |
@@ -50,7 +65,7 @@
 - `npm run typecheck` যোগ করা হয়েছে; Vite build আগের মতোই
 
 ## আগের ফিচার যা অপরিবর্তিত আছে
-Gemini text chat, Gemini Live voice, Android TTS, encrypted API key (Android Keystore), conversation history, settings, floating voice controls, notification controls, background Live call, WhatsApp draft, contact lookup, dialer, torch, Wi-Fi panel।
+Gemini text chat, Gemini Live voice, Android TTS, encrypted API key (Android Keystore), conversation history, settings, floating voice controls, notification controls, background Live call, contact lookup, torch, Wi-Fi panel, ১৩টি system panel, alarm/timer/calendar/Maps, share, clipboard, media keys, volume, device status, app list, camera।
 
 ## APK বানানো
 
@@ -62,12 +77,12 @@ npm run check          # TypeScript typecheck + Vite asset build
 pwsh -NoProfile -File scripts/build-android.ps1 -SdkRoot 'C:\path\to\android-sdk' -JavaRoot 'C:\path\to\jdk-21'
 ```
 
-APK: `artifacts/android/Vishal-Jarvis-1.2.0-private.apk`
+APK: `artifacts/android/Vishal-Jarvis-1.3.0-private.apk`
 
 ইনস্টল:
 
 ```powershell
-adb install -r artifacts/android/Vishal-Jarvis-1.2.0-private.apk
+adb install -r artifacts/android/Vishal-Jarvis-1.3.0-private.apk
 ```
 
 ## ফোনে চালানোর শর্ত
