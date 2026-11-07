@@ -1,0 +1,11 @@
+node_modules/
+android/app/build/
+android/app/src/main/assets/
+android/local-debug.keystore
+artifacts/
+build/icon.png
+*.apk
+*.log
+android/.gradle/
+android/app/src/main/res/drawable/vishal_jarvis_icon.png
+build/icon.ico
