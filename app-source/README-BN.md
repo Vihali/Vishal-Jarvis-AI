@@ -1,6 +1,23 @@
-# Vishal Jarvis — Android App Source (v1.3.0)
+# Vishal Jarvis — Android App Source (v1.4.0)
 
-এই ZIP-এ Android-এ চালানোর জন্য Vishal Jarvis-এর সম্পূর্ণ source code রয়েছে। v1.3.0-এ এজেন্ট এখন কাজটা **নিজেই শেষ করে**: নিজে ফোন করে (একাধিক SIM থাকলে জিজ্ঞেস করে), আর WhatsApp/Telegram/Instagram/Messenger/SMS-এ মেসেজ নিজে পাঠিয়ে দেয়।
+## v1.4.0 আপডেট
+
+আগের UI, 3D রোবট, settings, voice ও ফোন-অ্যাকশন রাখা হয়েছে। পাঠানো AI প্রশ্ন ফোনে
+সেভ হয়; অ্যাপ মিনিমাইজ বা স্ক্রিন বন্ধ থাকলেও Android-এর foreground service ও
+persistent JobScheduler কাজ চালাতে বা নেটওয়ার্ক ফিরে এলে আবার চেষ্টা করতে পারে।
+ফলাফল history-তে থাকে, notification অনুমতি থাকলে খবর দেয়। ফোন পুরোপুরি বন্ধ থাকলে
+অ্যাপ কাজ করতে পারে না; কোনো server-side worker নেই। Android battery restriction,
+Doze, force-stop এবং reboot-এর পরে প্রথম unlock কাজ দেরি করাতে পারে।
+
+SIM access-এর automatic permission prompt সরানো হয়েছে। আগে থেকে phone-state access
+না থাকলে নির্দিষ্ট SIM-এর তালিকা/নির্বাচন নাও পাওয়া যেতে পারে; ফোনের default account
+বা system chooser ব্যবহার করা যায়। Phone ও SMS-এর আলাদা অনুমতি আগের মতোই আছে।
+Settings-এ text size এবং `.txt` conversation export/share যোগ হয়েছে। বর্তমান build ও
+নিরাপত্তার নির্দেশনা `android/README.md`-এ রয়েছে।
+
+---
+
+এই ZIP-এ Android-এ চালানোর জন্য Vishal Jarvis-এর সম্পূর্ণ source code রয়েছে। আগের v1.3.0-এ এজেন্ট এখন কাজটা **নিজেই শেষ করে**: নিজে ফোন করে (একাধিক SIM থাকলে জিজ্ঞেস করে), আর WhatsApp/Telegram/Instagram/Messenger/SMS-এ মেসেজ নিজে পাঠিয়ে দেয়।
 
 ## v1.3.0-এ নতুন কী
 
@@ -77,12 +94,12 @@ npm run check          # TypeScript typecheck + Vite asset build
 pwsh -NoProfile -File scripts/build-android.ps1 -SdkRoot 'C:\path\to\android-sdk' -JavaRoot 'C:\path\to\jdk-21'
 ```
 
-APK: `artifacts/android/Vishal-Jarvis-1.3.0-private.apk`
+APK: `artifacts/android/Vishal-Jarvis-1.4.0-debug.apk`
 
 ইনস্টল:
 
 ```powershell
-adb install -r artifacts/android/Vishal-Jarvis-1.3.0-private.apk
+adb install -r artifacts/android/Vishal-Jarvis-1.4.0-debug.apk
 ```
 
 ## ফোনে চালানোর শর্ত
@@ -91,6 +108,6 @@ adb install -r artifacts/android/Vishal-Jarvis-1.3.0-private.apk
 - প্রয়োজন অনুযায়ী microphone, contacts, camera, notification এবং floating-control permission
 
 ## সীমাবদ্ধতা (সৎভাবে)
-এই ZIP source package, APK নয়। এই আপডেটে TypeScript typecheck এবং Vite build সফলভাবে চালানো হয়েছে, কিন্তু Android SDK/ডিভাইস এই পরিবেশে নেই — তাই **APK build বা physical-device test এখানে করা হয়নি**। নিজের ফোনে build করে startup, 3D character, text chat + tool call, Live voice, প্রতিটি permission flow এবং background/battery আচরণ যাচাই করে নিন।
+এই ZIP source package, APK নয়। GitHub Actions-এ APK build ও Android emulator পরীক্ষা করা হয়; বাস্তব ফোনে startup, 3D character, voice, permission, network এবং battery আচরণ আলাদা করে যাচাই করা জরুরি।
 
 এজেন্ট এখনো এগুলো পারে না (ইচ্ছাকৃতভাবে): notification পড়া, screenshot/screen capture, অন্য অ্যাপের UI চালানো, ফাইল পড়া/লেখা, নীরবে message পাঠানো বা কল করা, Wi-Fi/Bluetooth নীরবে বন্ধ-চালু করা। Android package ID `com.myraa.mobile` আগের compatibility-র জন্য অপরিবর্তিত।

@@ -13,6 +13,7 @@ for (const source of [activity, actions]) {
   }
 }
 assert.match(actions, /simInfo[\s\S]*?No SIM access request was made/);
+assert.doesNotMatch(manifest, /android\.permission\.READ_PHONE_NUMBERS/, 'unused SIM-number permission is not declared');
 for (const permission of ['CALL_PHONE', 'SEND_SMS', 'READ_CONTACTS', 'CAMERA', 'RECORD_AUDIO'])
   assert.ok(manifest.includes(`android.permission.${permission}`), `keep unrelated ${permission} permission`);
 assert.match(manifest, /AiTaskJobService[\s\S]*?BIND_JOB_SERVICE/);

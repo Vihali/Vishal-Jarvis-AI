@@ -587,7 +587,11 @@ window.MyraaEvents = event => {
     return;
   }
   if (event.type === 'error') {
-    if (event.id && event.id !== requestId) return;
+    if (event.id && event.id !== requestId) {
+      notice(`Background task: ${event.message || 'could not finish.'}`);
+      if (bridge) { state = JSON.parse(bridge.getState()); renderHistory(); }
+      return;
+    }
     if (event.service === 'text' || event.service === 'live') stopVoice();
     notice(event.message);
     if (event.service === 'text' || event.id === requestId) {

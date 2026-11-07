@@ -11,12 +11,12 @@ on:
     paths:
       - 'app-source/**'
       - '.github/workflows/android-build.yml'
-      - 'tools/package-source.py'
+      - 'tools/**'
   pull_request:
     paths:
       - 'app-source/**'
       - '.github/workflows/android-build.yml'
-      - 'tools/package-source.py'
+      - 'tools/**'
 
 permissions:
   contents: read
@@ -41,6 +41,8 @@ jobs:
           cache-dependency-path: app-source/package-lock.json
       - run: npm ci
       - run: npm run check
+      - name: Check source archive safety and reproducibility
+        run: python ../tools/test-package-source.py
 
   build:
     name: Build and verify Vishal Jarvis APK
@@ -189,6 +191,18 @@ jobs:
             }
           }
           "compatible=$compatible" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "::notice title=APK verification::Signing mode: ${{ steps.signing.outputs.mode }}; v1.3.0 certificate match: $compatible"
+          if ($compatible -ne 'yes') {
+            Write-Host '::warning title=Android update compatibility::Back up/export data first. If the previous certificate does not match, Android requires uninstalling the old app, which deletes its local data.'
+          }
+          @(
+            '### APK verification',
+            '- Package: `com.myraa.mobile`',
+            '- Version: `1.4.0` (9)',
+            '- Signing: `${{ steps.signing.outputs.mode }}`',
+            "- Certificate match with v1.3.0: ``$compatible``",
+            "- APK SHA-256: ``$((Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLower())``"
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
       - name: Upload the APK
         uses: actions/upload-artifact@v4
         with:
@@ -243,6 +257,27 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash app-source/scripts/run-emulator-tests.sh test-apks
+      - name: Attach emulator test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vishal-Jarvis-Emulator-Results
+          path: /tmp/*Instrumentation.log
+          if-no-files-found: ignore
+      - name: Summarize any emulator test failure
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for file in /tmp/*Instrumentation.log; do
+            if grep -qE '(^|[[:space:]])FAIL:|BACKGROUND_TESTS_FAILED' "$file" || ! grep -q 'INSTRUMENTATION_CODE: -1' "$file"; then
+              message=$(tail -c 6000 "$file")
+              message=${message//'%'/'%25'}
+              message=${message//$'\n'/'%0A'}
+              message=${message//$'\r'/'%0D'}
+              echo "::error title=$(basename "$file")::$message"
+            fi
+          done
 
   release:
     name: Publish the verified APK to GitHub Releases

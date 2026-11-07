@@ -20,7 +20,11 @@ public final class AiTaskJobService extends JobService {
     String id = params.getExtras().getString("taskId");
     if (id == null || !id.matches("[A-Za-z0-9-]{1,80}")) return false;
     Control control = new Control();
-    if (running.putIfAbsent(id, control) != null) return false;
+    if (running.putIfAbsent(id, control) != null) {
+      // A stopped connection can take time to unwind. Do not lose its rescheduled job.
+      new android.os.Handler(getMainLooper()).post(() -> jobFinished(params, true));
+      return true;
+    }
     new Thread(() -> process(params, id, control), "VishalJarvis-Task").start();
     return true;
   }
@@ -71,6 +75,7 @@ public final class AiTaskJobService extends JobService {
           AiTaskStore.Task task = store.find(id);
           if (task != null && !AiTaskEvents.visible) AiTaskNotifications.finished(this, task, false);
           AiTaskEvents.emit(AiAgent.json("type", "error", "service", "text", "id", id, "message", message));
+          AiTaskEvents.emit(AiAgent.json("type", "task-state"));
         }
       }
     } finally {
@@ -87,7 +92,7 @@ public final class AiTaskJobService extends JobService {
   @Override public boolean onStopJob(JobParameters params) {
     String id = params.getExtras().getString("taskId");
     Control control = id == null ? null : running.get(id);
-    if (control != null) control.stop();
+    if (control != null) { control.stop(); running.remove(id, control); }
     if (control != null && control.acquired && id != null && !AiTaskStore.get(this).isCancelled(id)) AiTaskStore.get(this).requeue(id, "Waiting for Android to resume the task.");
     return true;
   }

@@ -354,7 +354,7 @@ public class MainActivity extends Activity {
     @JavascriptInterface public void speak(String text) { speakText(text); }
     @JavascriptInterface public void stopSpeech() { if (tts != null) tts.stop(); emit(json("type", "speech", "active", false)); }
     @JavascriptInterface public void clearKey() {
-      cancel();
+      cancel(); AiTaskCoordinator.cancelAll(MainActivity.this);
       synchronized (settingsLock) {
         settingsGeneration.incrementAndGet();
         HttpsURLConnection connection = settingsConnection; if (connection != null) connection.disconnect();
@@ -415,10 +415,11 @@ public class MainActivity extends Activity {
     @JavascriptInterface public void shareTranscript() {
       runOnUiThread(() -> {
         try {
-          TranscriptExport.create(MainActivity.this);
+          File shared = TranscriptExport.createShared(MainActivity.this);
+          Uri uri = TranscriptProvider.uriFor(shared);
           Intent intent = new Intent(Intent.ACTION_SEND).setType("text/plain")
-            .putExtra(Intent.EXTRA_STREAM, TranscriptProvider.URI).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-          intent.setClipData(android.content.ClipData.newRawUri("Vishal Jarvis transcript", TranscriptProvider.URI));
+            .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+          intent.setClipData(android.content.ClipData.newRawUri("Vishal Jarvis transcript", uri));
           startActivity(Intent.createChooser(intent, "Share conversation text file"));
         } catch (Exception e) { error("export", e instanceof IllegalStateException ? e.getMessage() : "Could not share the transcript.", null); }
       });

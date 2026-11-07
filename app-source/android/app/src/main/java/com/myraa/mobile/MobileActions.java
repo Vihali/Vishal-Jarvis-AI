@@ -247,8 +247,8 @@ public final class MobileActions {
     List<PhoneAccountHandle> accounts=callAccounts();
     PhoneAccountHandle handle=null;
     int choice=simIndex(sim);
-    if(choice>0 && accounts.isEmpty()){
-      finish(id,"unavailable","I cannot select a specific SIM without phone-state access. Use the phone’s default call account or choose it in the system dialer.");return;
+    if(choice>0 && (accounts.isEmpty() || choice>accounts.size())){
+      finish(id,"unavailable","I cannot select that SIM. Phone-state access or that account is unavailable. Use the phone’s default call account or choose it in the system dialer.");return;
     }
     if(accounts.size()>1){
       if(choice<1){

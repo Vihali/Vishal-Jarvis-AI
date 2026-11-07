@@ -9,3 +9,14 @@ build/icon.png
 android/.gradle/
 android/app/src/main/res/drawable/vishal_jarvis_icon.png
 build/icon.ico
+android/build/
+android/local.properties
+android/keystore.properties
+android/app/google-services.json
+.env*
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key

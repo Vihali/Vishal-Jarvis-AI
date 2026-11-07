@@ -105,7 +105,7 @@ public class BackgroundInstrumentation extends Instrumentation {
       reopen();
       check("true".equals(js("!!document.getElementById('avatar')&&!!document.getElementById('search-toggle')&&!!document.getElementById('theme')")),"original character, conversation search and theme controls remain present");
       js("MyraaNative.setTextScale(130);true");
-      until(()->web.getSettings().getTextZoom()==130,"text zoom",10);
+      until(()->{AtomicInteger zoom=new AtomicInteger();runOnMainSync(()->zoom.set(web.getSettings().getTextZoom()));return zoom.get()==130;},"text zoom",10);
       check(prefs.getInt("textScale",0)==130,"adjustable text size is saved and applied to the existing WebView");
       js("MyraaNative.setTextScale(100);true");
 
@@ -160,9 +160,17 @@ public class BackgroundInstrumentation extends Instrumentation {
         byte[] b=new byte[2048];int n;while((n=in.read(b))!=-1)out.write(b,0,n);fileText=out.toString("UTF-8");
       }
       check(fileText.contains("Fixture question while the phone sleeps")&&fileText.contains("Sources:"),"UTF-8 text-file export includes the conversation and research sources");
+      File shareOne=(File)invoke(exporter,"createShared",new Class[]{Context.class},target);
+      File shareTwo=(File)invoke(exporter,"createShared",new Class[]{Context.class},target);
+      Class<?> providerClass=loader.loadClass("com.myraa.mobile.TranscriptProvider");
+      android.net.Uri sharedUri=(android.net.Uri)invoke(providerClass,"uriFor",new Class[]{File.class},shareOne);
+      try(InputStream shared=target.getContentResolver().openInputStream(sharedUri)) {
+        check(shared!=null && shared.read()>=0 && !shareOne.getName().equals(shareTwo.getName()),"sharing uses an isolated readable text-file URI for each export");
+      }
       output.putString("stream",evidence.toString()+"BACKGROUND_TESTS_PASSED\n"); finish(Activity.RESULT_OK,output);
     } catch(Exception e) {
-      output.putString("stream",evidence.toString()+"BACKGROUND_TESTS_FAILED: "+e.toString()+"\n"); finish(Activity.RESULT_CANCELED,output);
+      StringWriter details=new StringWriter(); e.printStackTrace(new PrintWriter(details));
+      output.putString("stream",evidence.toString()+"BACKGROUND_TESTS_FAILED: "+details+"\n"); finish(Activity.RESULT_CANCELED,output);
     } finally {
       try { if(factoryField!=null)factoryField.set(null,factoryBefore); } catch(Exception ignored){}
       try { if(store!=null){invoke(coordinatorClass,"cancelAll",new Class[]{Context.class},target);invoke(store,"clearHistory",new Class[]{});} } catch(Exception ignored){}

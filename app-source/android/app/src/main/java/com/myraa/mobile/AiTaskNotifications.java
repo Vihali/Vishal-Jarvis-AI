@@ -30,14 +30,16 @@ final class AiTaskNotifications {
       .setVisibility(Notification.VISIBILITY_PRIVATE).build();
   }
   static void finished(Context context, AiTaskStore.Task task, boolean success) {
-    channel(context);
-    NotificationManager manager = (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
-    if (manager == null) return;
-    Notification notification = new Notification.Builder(context, CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info)
-      .setContentTitle(success ? "Vishal Jarvis finished" : "Vishal Jarvis needs your attention")
-      .setContentText(success ? "Tap to read your saved answer." : "Tap to check the task and connection settings.")
-      .setContentIntent(open(context, task.jobId())).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build();
-    try { manager.notify(task.jobId(), notification); } catch (SecurityException ignored) { /* Android 13 notification permission is optional. */ }
+    try {
+      channel(context);
+      NotificationManager manager = (NotificationManager)context.getSystemService(Context.NOTIFICATION_SERVICE);
+      if (manager == null) return;
+      Notification notification = new Notification.Builder(context, CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle(success ? "Vishal Jarvis finished" : "Vishal Jarvis needs your attention")
+        .setContentText(success ? "Tap to read your saved answer." : "Tap to check the task and connection settings.")
+        .setContentIntent(open(context, task.jobId())).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build();
+      manager.notify(task.jobId(), notification);
+    } catch (RuntimeException ignored) { /* Missing notification permission must not discard a saved answer. */ }
   }
   private AiTaskNotifications() {}
 }
