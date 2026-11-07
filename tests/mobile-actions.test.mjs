@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const root = process.env.SOURCE_DIR;
+assert.ok(root, 'SOURCE_DIR must identify the extracted project');
+const { parseMobileAction, MOBILE_TOOL } = await import(pathToFileURL(join(root, 'src/mobile/actions.ts')).href);
+assert.equal(parseMobileAction('call +919876543210'), null);
+assert.equal(parseMobileAction('call Sam'), null);
+assert.deepEqual(parseMobileAction('ব্যাটারি কত'), { action: 'device_status' });
+assert.deepEqual(parseMobileAction('bluetooth settings'), { action: 'open_bluetooth_settings' });
+assert.deepEqual(parseMobileAction('open Calculator'), { action: 'open_app', app: 'Calculator' });
+assert.deepEqual(parseMobileAction('torch on'), { action: 'set_flashlight', enabled: true });
+assert.deepEqual(parseMobileAction('torch off'), { action: 'set_flashlight', enabled: false });
+assert.deepEqual(parseMobileAction('wifi settings'), { action: 'open_wifi_settings' });
+const actions = MOBILE_TOOL.parameters.properties.action.enum;
+for (const action of ['call_number', 'call_contact']) assert.ok(!actions.includes(action));
+for (const action of ['device_status', 'set_volume', 'set_alarm', 'open_bluetooth_settings']) assert.ok(actions.includes(action));
+const manifest = await readFile(join(root, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+assert.match(manifest, /package="com\.myraa\.mobile"/);
+assert.doesNotMatch(manifest, /android\.permission\.(?:CALL_PHONE|READ_PHONE_STATE|READ_PHONE_NUMBERS|READ_PRIVILEGED_PHONE_STATE)/);
+const native = await readFile(join(root, 'android/app/src/main/java/com/myraa/mobile/MobileActions.java'), 'utf8');
+assert.doesNotMatch(native, /ACTION_(?:CALL|DIAL)|TelephonyManager|SubscriptionManager/);
+console.log('Mobile command and manifest checks passed.');

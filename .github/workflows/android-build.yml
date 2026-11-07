@@ -93,6 +93,13 @@ jobs:
             throw "npm install failed."
           }
 
+      - name: Test mobile commands and manifest
+        shell: pwsh
+        run: |
+          Set-Location $env:SOURCE_DIR
+          node --import tsx "$env:GITHUB_WORKSPACE/tests/mobile-actions.test.mjs"
+          if ($LASTEXITCODE -ne 0) { throw "Mobile command or manifest tests failed." }
+
       - name: Build Android APK
         shell: pwsh
         run: |
@@ -102,6 +109,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Android APK build failed."
           }
+
+      - name: Build instrumentation test APK
+        shell: pwsh
+        run: |
+          Set-Location $env:SOURCE_DIR
+          pwsh -NoProfile -File scripts/build-android-tests.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Instrumentation APK build failed." }
 
       - name: Verify APK
         shell: pwsh
@@ -117,6 +131,56 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Vishal-Jarvis-APK
+          name: Vishal-Jarvis-debug-APK
           path: ${{ runner.temp }}/Vishal-Jarvis-Android-App-Source/artifacts/android/Vishal-Jarvis-1.1.0-private.apk
           if-no-files-found: error
+
+      - name: Upload instrumentation APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vishal-Jarvis-instrumentation-APK
+          path: ${{ runner.temp }}/Vishal-Jarvis-Android-App-Source/artifacts/android/Vishal-Jarvis-tests.apk
+          if-no-files-found: error
+
+  emulator-tests:
+    name: Install and test APK on Android emulator
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Download debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Vishal-Jarvis-debug-APK
+          path: apk
+      - name: Download instrumentation APK
+        uses: actions/download-artifact@v4
+        with:
+          name: Vishal-Jarvis-instrumentation-APK
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install APKs and run instrumentation
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: |
+            set -euo pipefail
+            adb install -r apk/Vishal-Jarvis-1.1.0-private.apk
+            adb install -r apk/Vishal-Jarvis-tests.apk
+            for test in SmokeInstrumentation AuthInstrumentation ActionsInstrumentation; do
+              echo "Running $test"
+              output=$(timeout 300 adb shell am instrument -w "com.myraa.mobile.tests/com.myraa.mobile.tests.$test")
+              printf '%s\n' "$output"
+              if ! grep -q 'INSTRUMENTATION_CODE: -1' <<<"$output" || grep -qE 'FAIL:|INSTRUMENTATION_FAILED|Process crashed' <<<"$output"; then
+                echo "Instrumentation $test failed" >&2
+                exit 1
+              fi
+            done
