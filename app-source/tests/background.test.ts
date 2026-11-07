@@ -24,4 +24,13 @@ assert.match(coordinator, /setBackoffCriteria/);
 const pagehide = ui.match(/window\.addEventListener\('pagehide'[^\n]*/)?.[0] || '';
 assert.doesNotMatch(pagehide, /cancel\(/, 'closing the Activity must not cancel saved tasks');
 for (const feature of ['search-toggle', 'share-history', 'save-history-file', 'text-size', 'theme', 'avatar']) assert.ok(ui.includes(feature));
+
+// Regressions fixed in 1.5.1 must not come back.
+const audio = read('src/lib/audio.ts');
+assert.ok(audio.includes('isAndroidApp'), 'the desktop-only permission endpoint must stay skipped inside the app');
+assert.match(actions, /APP_ALIASES/, 'Bengali app names must stay mapped');
+assert.match(actions, /closestApps/, 'an unknown app must still offer suggestions');
+assert.match(actions, /ACTION_IMAGE_CAPTURE/, 'the camera action must keep its fallback');
+assert.match(ui, /runMobileWithFollowUp/, '"open X and play Y" must keep the two-step path');
+assert.ok(!ui.includes('if (!text || busy) return;'), 'phone commands must not be blocked by the busy lock');
 console.log('Background scheduling, SIM prompt, existing UI and export contracts passed.');

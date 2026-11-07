@@ -57,7 +57,13 @@ export class MobileLiveTransport implements AudioSocket {
           if (this.toolCalls.has(callId)) continue;
           if (this.toolCalls.size >= 128) { this.fail('Too many actions in this call. Reconnect to continue.'); return; }
           this.toolCalls.set(callId, { id: call.id, name: call.name });
-          this.packet({ type: 'toolCall', callId, name: call.name, args: call.args || {} });
+          try {
+            this.packet({ type: 'toolCall', callId, name: call.name, args: call.args || {} });
+          } catch {
+            // A broken handler must not cut the live call; answer the model honestly instead.
+            this.send(JSON.stringify({ type: 'toolResponse', id: callId, name: call.name,
+              output: { status: 'failed', message: 'That action could not run. Nothing was changed.' } }));
+          }
         }
         const content = data.serverContent;
         if (content?.interrupted) this.packet({ type: 'interrupted' });
@@ -78,10 +84,16 @@ export class MobileLiveTransport implements AudioSocket {
     };
   };
   send(raw: string) {
-    if (!this.ready || this.readyState !== 1 || this.socket?.readyState !== WebSocket.OPEN) return;
+    if (!this.ready || this.readyState !== 1 || this.socket?.readyState !== WebSocket.OPEN) {
+      const data = (() => { try { return JSON.parse(raw); } catch { return null; } })();
+      return;
+    }
     const data = JSON.parse(raw);
     if (data.audio) this.socket.send(JSON.stringify({ realtimeInput: { audio: { data: data.audio, mimeType: 'audio/pcm;rate=16000' } } }));
-    else if (data.type === 'text' && data.text) this.socket.send(JSON.stringify({ realtimeInput: { text: data.text } }));
+    // Live expects typed user turns as clientContent, not as realtimeInput.text.
+    else if (data.type === 'text' && data.text) this.socket.send(JSON.stringify({
+      clientContent: { turns: [{ role: 'user', parts: [{ text: String(data.text) }] }], turnComplete: true },
+    }));
     else if (data.type === 'toolResponse') {
       const call = this.toolCalls.get(data.id);
       if (call && call.name === data.name) this.socket.send(JSON.stringify({ toolResponse: { functionResponses: [{ ...(call.id ? { id: call.id } : {}), name: call.name, response: data.output }] } }));

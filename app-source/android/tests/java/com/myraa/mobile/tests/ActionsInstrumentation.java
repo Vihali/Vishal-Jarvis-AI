@@ -74,6 +74,9 @@ public class ActionsInstrumentation extends Instrumentation {
     r=action("{\"action\":\"device_status\"}");check(r.optString("status").equals("info")&&r.optJSONObject("data")!=null&&r.optJSONObject("data").has("batteryPercent"),"device status returns real local facts");
     r=action("{\"action\":\"list_apps\"}");check(r.optString("status").equals("apps")&&r.optJSONObject("data").optJSONArray("apps")!=null,"installed app list is offered to the agent");
     r=action("{\"action\":\"media_control\",\"command\":\"next\"}");check(r.optString("status").equals("media_sent"),"media keys are dispatched without extra permissions");
+    r=action("{\"action\":\"open_app\",\"app\":\"ইউটিউব\"}");check(r.optString("status").equals("opened")&&last().getPackage().equals("com.google.android.youtube"),"a Bengali app name opens the right installed app");
+    r=action("{\"action\":\"open_app\",\"app\":\"the youtube app\"}");check(r.optString("status").equals("opened"),"\"the youtube app\" is cleaned up before lookup");
+    before=opened.size();r=action("{\"action\":\"open_app\",\"app\":\"zzzzunknownapp\"}");check(r.optString("status").equals("not_installed")&&opened.size()==before,"an unknown app reports honestly and launches nothing");
     r=action("{\"action\":\"play_media\",\"query\":\"Millionaire\",\"app\":\"youtube\"}");check(r.optString("status").equals("play_started")&&last().getPackage().equals("com.google.android.youtube"),"play_media targets the named installed player");
     r=action("{\"action\":\"play_media\",\"query\":\"Triggered Insaan\"}");check(r.optString("status").equals("play_started"),"play_media picks an installed player when none is named");
     before=opened.size();r=action("{\"action\":\"play_media\",\"query\":\"Millionaire\",\"app\":\"spotify\"}");check(r.optString("status").equals("not_installed")&&opened.size()==before,"a missing player is reported instead of opening something else");

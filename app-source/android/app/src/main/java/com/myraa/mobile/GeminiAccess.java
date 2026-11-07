@@ -22,7 +22,8 @@ public final class GeminiAccess {
   }
 
   public static Failure failure(int status, String payload) {
-    if (status == 429) return new Failure("QUOTA_EXCEEDED", status, "Google's quota for this model is exhausted. Your key may still be valid. Wait for quota to reset or choose another model you can use.");
+    if (status == 408 || status == 409) return new Failure("PROVIDER_BUSY", status, "Google was busy or the request timed out. Your key and conversation were kept. Try again.");
+    if (status == 429) return new Failure("QUOTA_EXCEEDED", status, "Google is rate-limiting this key right now (free tier quota or too many requests). Your key is still valid; wait about a minute, or switch to another Gemini model in Settings.");
     if (status >= 500) return new Failure("PROVIDER_UNAVAILABLE", status, "Google is temporarily unavailable. Your key and conversation were kept. Try again later.");
     String reason = "", message = "";
     try {

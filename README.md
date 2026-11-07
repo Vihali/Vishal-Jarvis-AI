@@ -3,9 +3,23 @@
 This repository contains the existing Vishal Jarvis Android companion (`com.myraa.mobile`).
 The checked-in `app-source/` is the source of truth for the APK and the original
 `.github/workflows/android-build.yml` builds it. The `Vishal-Jarvis-Android-App-Source.zip`
-is a downloadable snapshot of that same source, not a second application. The 1.5 update
+is a downloadable snapshot of that same source, not a second application. The 1.5.1 update
 continues from the source of the previously published 1.4 APK, including its existing
 interface, procedural 3D robot, voice, settings, memory, background tasks and device actions.
+
+## What changed in 1.5.1
+
+- **“Open the app” now works.** Bengali/Hindi/Banglish app names are resolved
+  (`ইউটিউব`, `হোয়াটসঅ্যাপ`, `youtube kholo`), `the YouTube app` / `my calculator` are cleaned up,
+  and a miss returns real suggestions instead of a silent failure. YouTube, Maps, the camera and
+  popular services fall back to the browser when their app is absent.
+- **No more stuck “busy” state.** A finished or timed-out action clears its chooser/permission
+  waiter, so one unanswered dialog no longer blocks every later command.
+- **Live voice actually connects on Android.** The bundled UI was calling the desktop-only
+  `/api/permissions` endpoint before starting audio, which failed on the phone every time.
+- **Smaller fixes:** phone commands are not blocked by a running text reply, long answers are no
+  longer cut at 2048 tokens, rate limits are reported as temporary instead of “invalid key”, the
+  Activity recreates without losing the page, and a denied microphone says why.
 
 ## What changed in 1.5
 

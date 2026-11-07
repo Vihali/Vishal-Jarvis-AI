@@ -140,7 +140,7 @@ final class AiAgent {
     JSONObject request = json("systemInstruction", json("parts", new JSONArray().put(json("text", instruction))),
       "contents", contents, "tools", tools,
       "toolConfig", functionTools ? json("functionCallingConfig", json("mode", "AUTO")) : null,
-      "generationConfig", json("maxOutputTokens", 2048));
+      "generationConfig", json("maxOutputTokens", 8192));
     HttpsURLConnection connection = null;
     try {
       connection = connections.open(new URL("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":streamGenerateContent?alt=sse"));

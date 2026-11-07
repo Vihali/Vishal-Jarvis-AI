@@ -1,9 +1,34 @@
-# Vishal Jarvis Android 1.5
+# Vishal Jarvis Android 1.5.1
 
 The existing Android application keeps package ID `com.myraa.mobile`, Android 8 / API 26
 minimum, API 35 target, the bundled WebView/Three.js robot and the existing settings,
 live voice, memory and phone actions. Android System WebView 100+ and OpenGL ES 3 are
 required. Gemini requires the user's own API key and access to the configured model.
+
+## Reliability fixes (1.5.1)
+
+Opening apps and other everyday actions were the weak point, so 1.5.1 fixes the whole path:
+
+- **App names:** Bengali, Hindi and Banglish names are mapped before lookup
+  (`ইউটিউব → youtube`, `হোয়াটসঅ্যাপ → whatsapp`), `the / my / … app` is stripped, and the
+  launcher matcher no longer guesses from one or two letters. A miss now reports up to three
+  close installed labels (`Did you mean …?`) instead of a bare failure.
+- **Fallbacks:** YouTube opens in the browser when the app is missing, the camera action
+  retries with the capture intent, Maps falls back to the web map, and popular services
+  (Facebook, Instagram, Spotify, Netflix, …) open their site when no app is installed.
+- **No wedged actions:** a finished action now clears its chooser/permission waiter, a timed-out
+  action is cancelled instead of leaving a dialog that made every later action report "busy",
+  and the in-app timeout dropped from 120 s to 60 s.
+- **Live voice:** the bundled WebView called `/api/permissions`, which only exists on the
+  desktop server; on Android that made every live call fail before audio started. It is now
+  skipped inside the app. Typed text during a call is sent as `clientContent`, a tool handler
+  exception no longer kills the session, and a second tap while connecting is ignored.
+- **Text chat:** the `busy` lock no longer blocks phone commands, and long answers are no
+  longer cut at 2048 tokens. Rate limiting (429/408/409) is described as temporary instead of
+  invalidating a working key.
+- **Activity/WebView:** the stop-live receiver is registered once, a WebView microphone denial
+  now explains itself, and the page is kept when the Activity is recreated so a typed message
+  or live call is not silently lost.
 
 ## Music and video playback (1.5)
 

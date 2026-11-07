@@ -59,8 +59,8 @@ function runMobileAction(name: string, args: unknown): Promise<any> {
   return new Promise(resolve => {
     const timer = setTimeout(() => {
       actionRequests.delete(id); bridge.cancelMobileAction(id);
-      resolve({ status: 'timeout', message: 'That action timed out and was cancelled. If a chooser opened, answer it, then try again.' });
-    }, 120000);
+      resolve({ status: 'timeout', message: 'That action timed out and was cancelled. If a chooser or permission prompt opened, answer it, then ask again.' });
+    }, 60000);
     actionRequests.set(id, { resolve, timer });
     bridge.mobileAction(id, name, JSON.stringify(args));
   });
@@ -283,6 +283,8 @@ function emptyState() {
   el('messages').appendChild(card);
 }
 
+let recentToolLines: string[] = [];
+
 function renderHistory() {
   el('messages').replaceChildren();
   streaming = null;
@@ -290,7 +292,18 @@ function renderHistory() {
   let turns = query ? state.history.filter(turn => (turn.text || '').toLowerCase().includes(query)) : showAllHistory ? state.history : state.history.slice(-6);
   turns = turns.slice(-120);
   const pending = (state.pending || []).filter(task => !query || task.text.toLowerCase().includes(query));
-  if (!turns.length && !pending.length) { emptyState(); return; }
+  if (!turns.length && !pending.length) {
+    if (query) {
+      const none = document.createElement('div');
+      none.className = 'empty';
+      none.innerHTML = `<h3>No matches</h3><p>Nothing in this conversation matches “${escapeHtml(searchQuery.trim())}”.</p>`;
+      el('messages').appendChild(none);
+      return;
+    }
+    emptyState();
+    for (const line of recentToolLines.slice(-6)) append('tool', line);
+    return;
+  }
   let lastModel = -1;
   turns.forEach((turn, index) => { if (turn.role === 'model') lastModel = index; });
   turns.forEach((turn, index) => {
@@ -303,6 +316,9 @@ function renderHistory() {
     status.textContent = task.status === 'running' ? 'PROCESSING' : 'SAVED · WAITING TO RESUME';
     item.appendChild(status);
   });
+  if (!query && recentToolLines.length) {
+    for (const line of recentToolLines.slice(-6)) append('tool', line);
+  }
   if (query) {
     const label = document.createElement('div');
     label.className = 'muted search-note';
@@ -353,6 +369,9 @@ function renderQuickActions() {
       void runMobileAction('mobile_action', chip.action).then(result => {
         append('tool', result?.message || 'Action finished.');
         notice(result?.message || '');
+        setStatus('Ready', !navigator.onLine);
+        system?.setFrameInput({ activity: 'idle', emotion: result?.status === 'opened' || result?.status === 'play_started' ? 'happy' : 'idle' });
+        vibe(result?.status === 'opened' || result?.status === 'play_started' ? [12, 40, 12] : 20);
       });
     };
     host.appendChild(button);
@@ -498,6 +517,10 @@ function liveTranscription(role: 'user' | 'model', text: string) {
   if (role === 'model') lastReply = liveCaption.body.textContent;
 }
 
+function rememberToolLine(line: string) {
+  recentToolLines = [...recentToolLines, line].slice(-6);
+}
+
 function finishStream() {
   if (!streaming) return;
   const item = streaming.element;
@@ -529,7 +552,8 @@ window.MyraaEvents = event => {
   }
   if (event.type === 'tool-result') {
     const result = event.result || {};
-    const good = ['opened', 'settings_opened', 'torch_changed', 'alarm_opened', 'timer_opened', 'event_opened', 'navigated', 'shared', 'copied', 'media_sent', 'volume_changed', 'info', 'apps', 'saved', 'call_started', 'sent', 'sent_unverified', 'sms_queued', 'sms_delivered_to_network'].includes(result.status);
+    const good = ['opened', 'play_started', 'search_opened', 'settings_opened', 'torch_changed', 'alarm_opened', 'timer_opened', 'event_opened', 'navigated', 'shared', 'copied', 'media_sent', 'volume_changed', 'info', 'apps', 'saved', 'call_started', 'sent', 'sent_unverified', 'sms_queued', 'sms_delivered_to_network'].includes(result.status);
+    if (result.data?.suggestions) activity(`${result.message} ${result.data.suggestions}`, 'warn', false);
     activity(result.message || (good ? 'Done.' : 'Not completed.'), good ? 'done' : 'warn', false);
     return;
   }
@@ -605,19 +629,39 @@ window.MyraaEvents = event => {
   if (event.type === 'speech' && !liveSession) system?.setFrameInput({ activity: event.active ? 'talking' : 'idle' });
 };
 
+
+/** "open YouTube and play lofi" runs the open first, then the second half. */
+async function runMobileWithFollowUp(action: Record<string, unknown>, originalText: string) {
+  setStatus('Working on your phone…');
+  const result = await runMobileAction('mobile_action', action);
+  const firstMessage = result?.message || 'Action finished.';
+  append('tool', firstMessage); rememberToolLine(firstMessage);
+  notice(firstMessage);
+  vibe(result?.status === 'opened' || result?.status === 'play_started' ? [12, 40, 12] : 20);
+  const followUp = /^(?:please\s+)?(?:open|launch|start|খোলো)\s+.+?\s+(?:and|then|আর|এবং|তারপর)\s+(.+)$/iu.exec(originalText);
+  const failed = ['not_installed', 'invalid', 'unavailable', 'failed', 'permission_required'].includes(String(result?.status));
+  if (followUp && !failed) {
+    const next = parseMobileAction(followUp[1]);
+    if (next) {
+      const second = await runMobileAction('mobile_action', next);
+      const secondMessage = second?.message || 'Action finished.';
+      append('tool', secondMessage); rememberToolLine(secondMessage);
+      notice(secondMessage);
+    }
+  }
+  setStatus('Ready', !navigator.onLine);
+  system?.setFrameInput({ activity: 'idle', emotion: result?.status === 'opened' || result?.status === 'play_started' ? 'happy' : 'idle' });
+}
+
 function send() {
   const input = el<HTMLTextAreaElement>('input');
   const text = input.value.trim();
-  if (!text || busy) return;
+  if (!text) return;
   vibe();
   const mobile = parseMobileAction(text);
   if (mobile) {
     input.value = ''; autosize(); append('user', text);
-    void runMobileAction('mobile_action', mobile).then(result => {
-      append('tool', result?.message || 'Action finished.');
-      notice(result?.message || '');
-      setStatus('Ready');
-    });
+    void runMobileWithFollowUp(mobile, text);
     return;
   }
   if (liveSession && liveSession.getState() !== 'disconnected') {
@@ -635,6 +679,8 @@ function send() {
     notice(`Requested: ${command.action.replace('_', ' ')}.`);
     return;
   }
+  // Only a Gemini text reply needs the busy lock; phone actions always run immediately.
+  if (busy) { notice('A reply is still running. Tap Stop first, or wait for it.'); return; }
   if (!bridge) { notice('Native chat runs inside the Android app. This is a browser preview.'); return; }
   if (!state.keyConfigured) { notice('Add your Gemini API key in Settings before sending.'); openSettings(); return; }
   requestId = crypto.randomUUID(); busy = true; pendingText = text;
@@ -662,6 +708,7 @@ el('voice').onclick = () => {
   if (!bridge) { notice('Gemini Live voice runs inside the Android app.'); return; }
   if (!state.keyConfigured) { notice('Add a working Gemini key in Settings to start Live voice.'); openSettings(); return; }
   if (busy) { notice('Stop the current text reply before starting Live voice.'); return; }
+  if (liveSession && liveSession.getState() === 'connecting') { notice('Still connecting to Live voice…'); return; }
   bridge.stopSpeech(); liveCaption = null;
   liveSession = new MyraaAudioSession({
     connection: { createSocket: () => new MobileLiveTransport(bridge) },

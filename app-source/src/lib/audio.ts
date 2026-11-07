@@ -245,6 +245,11 @@ export class MyraaAudioSession {
     }
   }
 
+  /** Bundled Android WebView has no HTTP server behind it. */
+  private isAndroidApp(): boolean {
+    return !!(window as any).MyraaNative || location.hostname === 'appassets.androidplatform.net';
+  }
+
   /** Queue typed input; it is flushed once Gemini Live is ready. */
   public sendText(text: string) {
     const trimmed = text.trim();
@@ -283,11 +288,20 @@ export class MyraaAudioSession {
     this.setState("connecting");
 
     try {
-      if (useMicrophone && !this.connection) {
-        const response = await fetch('/api/permissions');
-        if (!response.ok) throw new Error('Could not check microphone permissions. Text chat is still available.');
-        const permissions = await response.json();
-        if (permissions?.policy?.capabilities?.ACCESS_MICROPHONE?.decision === 'deny') throw new Error('Microphone access is denied in MYRAA permissions. You can keep using text.');
+      // The desktop build checks a server permission policy. The Android app has no
+      // server at all, so asking /api/permissions here made every live call fail.
+      // Only ask when a custom socket is absent AND the origin really serves it.
+      if (useMicrophone && !this.connection && !this.isAndroidApp()) {
+        try {
+          const response = await fetch('/api/permissions');
+          if (response.ok) {
+            const permissions = await response.json();
+            if (permissions?.policy?.capabilities?.ACCESS_MICROPHONE?.decision === 'deny') throw new Error('Microphone access is denied in the permission policy. You can keep using text.');
+          }
+        } catch (policyError) {
+          // A missing policy endpoint is not a microphone failure; continue with audio.
+          if (policyError instanceof Error && policyError.message.includes('denied')) throw policyError;
+        }
         if (!this.isActivated) return;
       }
       // 1. Establish custom WebSocket server bridge

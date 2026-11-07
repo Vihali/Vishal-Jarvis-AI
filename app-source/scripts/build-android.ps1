@@ -79,7 +79,7 @@ if (-not (Test-Path -LiteralPath $keyStore)) {
 }
 New-Item -ItemType Directory -Path 'artifacts\android' -Force | Out-Null
 $manifestText = Get-Content -LiteralPath 'android\app\src\main\AndroidManifest.xml' -Raw
-$versionName = if ($manifestText -match 'android:versionName="([0-9.]+)"') { $Matches[1] } else { '1.5.0' }
+$versionName = if ($manifestText -match 'android:versionName="([0-9.]+)"') { $Matches[1] } else { '1.5.1' }
 $apk = Join-Path $projectRoot "artifacts\android\Vishal-Jarvis-$versionName-debug.apk"
 & (Join-Path $toolsRoot 'apksigner.bat') sign --ks $keyStore --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out $apk $aligned
 if ($LASTEXITCODE -ne 0) { throw 'APK signing failed.' }

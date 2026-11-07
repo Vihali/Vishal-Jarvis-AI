@@ -64,6 +64,45 @@ export const REMEMBER_TOOL = {
 
 export const LIVE_TOOLS = [MOBILE_TOOL, REMEMBER_TOOL];
 
+/** Bengali-script app names the user can say; mapped to the name Android resolves. */
+const APP_ALIASES: Record<string, string> = {
+  'ইউটিউব': 'youtube', 'ইউটিউব অ্যাপ': 'youtube', 'ইউ টিউব': 'youtube', 'यूट्यूब': 'youtube',
+  'হোয়াটসঅ্যাপ': 'whatsapp', 'হোয়াটস এপ': 'whatsapp', 'व्हाट्सएप': 'whatsapp', 'व्हाट्सऐप': 'whatsapp',
+  'ইনস্টাগ্রাম': 'instagram', 'इंस्टाग्राम': 'instagram',
+  'ফেসবুক': 'facebook', 'फेसबुक': 'facebook',
+  'টেলিগ্রাম': 'telegram', 'টেলিগ্ৰাম': 'telegram', 'टेलीग्राम': 'telegram',
+  'মেসেঞ্জার': 'messenger', 'मैसेंजर': 'messenger',
+  'ক্যালকুলেটর': 'calculator', 'ক্যালকুলেটার': 'calculator', 'कैलकुलेटर': 'calculator',
+  'ক্যামেরা': 'camera', 'कैमरा': 'camera',
+  'গ্যালারি': 'gallery', 'গ্যালারি অ্যাপ': 'gallery', 'गैलरी': 'gallery',
+  'সেটিংস': 'settings', 'सेटिंग्स': 'settings',
+  'প্লে স্টোর': 'play store', 'গুগল প্লে স্টোর': 'play store', 'प्ले स्टोर': 'play store',
+  'জিমেইল': 'gmail', 'ग्मेल': 'gmail',
+  'ফোন': 'phone', 'फोन': 'phone',
+  'কন্ট্যাক্টস': 'contacts', 'কনট্যাক্ট': 'contacts', 'संपर्क': 'contacts',
+  'ম্যাপস': 'maps', 'ম্যাপ': 'maps', 'मैप्स': 'maps',
+  'ক্লক': 'clock', 'ঘড়ি': 'clock', 'घड़ी': 'clock',
+  'ফাইলস': 'files', 'ফাইল': 'files', 'फाइल': 'files',
+  'স্পটিফাই': 'spotify', 'गाना': 'gaana', 'গানা': 'gaana', 'जियोसावन': 'jiosaavn',
+  'ক্রোম': 'chrome', 'গুগল ক্রোম': 'chrome',
+};
+/** "the YouTube app" → "youtube" so Android can match the launcher label. */
+function normalizeAppName(value: string): string {
+  let name = value.trim().replace(/^["'“”]|["'“”]$/g, '').replace(/\s+/g, ' ').trim();
+  const direct = APP_ALIASES[name.toLowerCase()];
+  if (direct) return direct;
+  // "the YouTube app, please" → "YouTube" before the alias lookup, so Android sees "youtube".
+  name = name.replace(/\s+(?:please|now|for me)$/i, '')
+    .replace(/^(?:the|a|an|my|মার|আমার)\s+/iu, '')
+    .replace(/\s+(?:app|application|অ্যাপ|एप)$/iu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const alias = APP_ALIASES[name.toLowerCase()];
+  if (alias) return alias;
+  // Plain English names are compared lower-case, exactly like Android's launcher labels.
+  return /^[\x20-\x7e]+$/.test(name) ? name.toLowerCase() : name;
+}
+
 /** Which music app the user named, if any. */
 const PLAY_APPS: Record<string, string> = {
   'youtube music': 'youtube_music', 'yt music': 'youtube_music',
@@ -177,8 +216,16 @@ export function parseMobileAction(input: string): MobileAction | null {
   match = /^(?:send\s+)?(?:message|msg|text)\s+(.+?)\s+(?:on|using|to)\s+(?:whatsapp|wp|wa)\s*[:,]\s*(.+)$/is.exec(text) || /^(?:whatsapp|wp|wa)\s+(?:message|msg)(?:\s+to)?\s+(.+?)\s*:\s*(.+)$/is.exec(text);
   if (match) return { action: 'send_message', app: 'whatsapp', recipient: match[1].trim(), text: match[2].trim() };
   const openText = text.replace(/[.!?।]+$/u, '');
-  match = /^(?:open|launch)\s+([\p{L}\p{N}][\p{L}\p{N} ._-]{0,79})$/iu.exec(openText) || /^(whatsapp|wp|wa|youtube|chrome)\s+(?:kholo|khol do|open karo)$/i.exec(openText);
-  if (match && !/\band\b/i.test(match[1])) return { action: 'open_app', app: match[1].trim() };
+  // "open YouTube and play lofi" must open YouTube, not try to launch "YouTube and play lofi".
+  const combined = /^(?:open|launch|start|খোলো|খুলে\s*দাও|ওপেন\s*করো)\s+(.+?)\s+(?:and|then|ar|আর|এবং|তারপর)\s+(.+)$/iu.exec(openText);
+  if (combined && normalizeAppName(combined[1])) return { action: 'open_app', app: normalizeAppName(combined[1]) };
+  match = /^(?:open|launch|start)\s+([\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} ._-]{0,79})$/iu.exec(openText)
+    || /^([\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} ._-]{0,39})\s+(?:kholo|khol\s*do|khulo|open\s*karo|open\s*koro|chalu\s*koro|start\s*koro)$/iu.exec(openText)
+    || /^([\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N} ._-]{0,39})\s*(?:খোলো|খুলে\s*দাও|ওপেন\s*করো|চালু\s*করো)$/u.exec(openText);
+  if (match) {
+    const app = normalizeAppName(match[1]);
+    if (app && !/^(?:it|that|this|এটা|ওটা|app|the\s+app)$/iu.test(app)) return { action: 'open_app', app };
+  }
   return null;
 }
 

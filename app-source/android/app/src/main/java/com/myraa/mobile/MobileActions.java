@@ -44,6 +44,28 @@ public final class MobileActions {
   private static final String SMS_RECEIPT="com.myraa.mobile.SMS_RECEIPT";
   /** Music players that accept media-browse intents, in the order I try them. */
   private static final LinkedHashMap<String,String> PLAYERS=new LinkedHashMap<>();
+  /** Bengali / Banglish app names the user says, mapped to what Android can resolve. */
+  private static final String[][] APP_ALIASES={
+    {"ইউটিউব","youtube"},{"ইউ টিউব","youtube"},{"यूट्यूब","youtube"},
+    {"হোয়াটসঅ্যাপ","whatsapp"},{"হোয়াটস এপ","whatsapp"},{"व्हाट्सएप","whatsapp"},{"व्हाट्सऐप","whatsapp"},
+    {"ইনস্টাগ্রাম","instagram"},{"इंस्टाग्राम","instagram"},
+    {"ফেসবুক","facebook"},{"फेसबुक","facebook"},
+    {"টেলিগ্রাম","telegram"},{"টেলিগ্ৰাম","telegram"},{"टेलीग्राम","telegram"},
+    {"মেসেঞ্জার","messenger"},{"मैसेंजर","messenger"},
+    {"ক্যালকুলেটর","calculator"},{"कैलकुलेटर","calculator"},
+    {"ক্যামেরা","camera"},{"कैमरा","camera"},
+    {"গ্যালারি","gallery"},{"गैलरी","gallery"},
+    {"সেটিংস","settings"},{"सेटिंग्स","settings"},
+    {"প্লে স্টোর","play store"},{"गুগল প্লে স্টোর","play store"},{"प्ले स्टोर","play store"},
+    {"জিমেইল","gmail"},{"ग्मेल","gmail"},
+    {"ফোন","phone"},{"फोन","phone"},
+    {"কন্ট্যাক্টস","contacts"},{"কনট্যাক্ট","contacts"},{"संपर्क","contacts"},
+    {"ম্যাপস","maps"},{"ম্যাপ","maps"},{"मैप्स","maps"},
+    {"ক্লক","clock"},{"ঘড়ি","clock"},{"घड़ी","clock"},
+    {"ফাইলস","files"},{"ফাইল","files"},{"फाइल","files"},
+    {"ক্রোম","chrome"},{"গুগল ক্রোম","chrome"},
+    {"স্পটিফাই","spotify"},{"गाना","gaana"},{"গানা","gaana"}
+  };
   private static final String[] PLAYER_ORDER={"youtube_music","youtube","spotify","prime_music","gaana","jiosaavn"};
   static{
     PLAYERS.put("youtube","com.google.android.youtube");
@@ -96,20 +118,38 @@ public final class MobileActions {
       public Intent app(String label){
         PackageManager pm=activity.getPackageManager();
         Intent main=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-        Intent loose=null;
+        String wanted=normalize(label);
+        if(wanted.length()<3)return null; // never guess from one or two letters
+        Intent prefix=null,contains=null;
         for(ResolveInfo info:pm.queryIntentActivities(main,0)){
           if(!info.activityInfo.exported)continue;
           String candidate=normalize(info.loadLabel(pm).toString());
-          if(candidate.equals(normalize(label)))
-            return new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setClassName(info.activityInfo.packageName,info.activityInfo.name);
-          if(loose==null&&candidate.length()>2&&(candidate.startsWith(normalize(label))||candidate.contains(normalize(label))))
-            loose=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setClassName(info.activityInfo.packageName,info.activityInfo.name);
+          if(candidate.equals(wanted))return launcherIntent(info);
+          if(prefix==null&&candidate.startsWith(wanted))prefix=launcherIntent(info);
+          // "contains" only when the label is long enough for the match to be meaningful.
+          if(contains==null&&wanted.length()>=5&&candidate.contains(wanted))contains=launcherIntent(info);
         }
-        return loose;
+        return prefix!=null?prefix:contains;
       }
-      public boolean open(Intent intent){try{activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));return true;}catch(ActivityNotFoundException|SecurityException e){return false;}}
+      private Intent launcherIntent(ResolveInfo info){
+        return new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+          .setClassName(info.activityInfo.packageName,info.activityInfo.name);
+      }
+      public boolean open(Intent intent){
+        if(intent==null)return false;
+        try{
+          activity.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+          return true;
+        }catch(ActivityNotFoundException|SecurityException missing){
+          // A stale shortcut or a removed app must not crash or look like a silent failure.
+          return false;
+        }catch(RuntimeException broken){
+          android.util.Log.w("MyraaActions","Intent could not be started: "+broken.getClass().getSimpleName());
+          return false;
+        }
+      }
     },new Contacts() {
-      public boolean needsPermission(){return true;}
+      public boolean needsPermission(){return !permissionsGranted;}
       public List<Recipient> find(String name){
         List<Recipient> found=new ArrayList<>();Set<String> seen=new HashSet<>();
         String escaped=name.replace("\\","\\\\").replace("%","\\%").replace("_","\\_");
@@ -180,7 +220,13 @@ public final class MobileActions {
     return value;
   }
   private void finish(String id,String status,String message){finish(id,status,message,null);}
-  private void finish(String id,String status,String message,JSONObject data){publish(id,status(status,message,data));}
+  private void finish(String id,String status,String message,JSONObject data){
+    // A completed action must never leave a stale dialog or permission waiter behind,
+    // otherwise every later action reports "busy" until the app restarts.
+    if(id!=null&&id.equals(pendingId)&&!"busy".equals(status)){pending=null;pendingId=null;pendingPhonePermission=null;}
+    if(id!=null&&id.equals(chooserId)&&!"busy".equals(status)){if(chooser!=null){try{chooser.dismiss();}catch(RuntimeException ignored){}}chooser=null;chooserId=null;}
+    publish(id,status(status,message,data));
+  }
   private void publish(String id,JSONObject value){
     completed.put(id,value);while(completed.size()>64)completed.remove(completed.keySet().iterator().next());result.complete(id,value);
   }
@@ -698,7 +744,8 @@ public final class MobileActions {
     if(target.isEmpty()){finish(id,"invalid","Say where you want to go.");return;}
     Intent intent=new Intent(Intent.ACTION_VIEW,Uri.parse("geo:0,0?q="+Uri.encode(target)));
     boolean opened=launcher.open(intent);
-    finish(id,opened?"navigated":"unavailable",opened?"Maps opened for "+target+". Start navigation when you are ready.":"No maps app could handle that destination.");
+    if(!opened){opened=launcher.open(web("https://www.google.com/maps/search/?api=1&query="+Uri.encode(target)));}
+    finish(id,opened?"navigated":"unavailable",opened?"Maps opened for "+target+". Start navigation when you are ready.":"No maps app or browser could handle that destination.");
   }
   private void share(String id,String text){
     String body=limit(text,4000,"");
@@ -778,7 +825,7 @@ public final class MobileActions {
       data.put("device",Build.MANUFACTURER+" "+Build.MODEL);
       data.put("android",Build.VERSION.RELEASE);
       data.put("sdk",Build.VERSION.SDK_INT);
-      data.put("appVersion","1.5.0");
+      data.put("appVersion","1.5.1");
       StringBuilder summary=new StringBuilder();
       summary.append("Battery ").append(percent<0?"unknown":percent+"%").append(data.optBoolean("charging")?", charging":"").append(". ");
       summary.append("Network: ").append(network).append(". ");
@@ -811,25 +858,108 @@ public final class MobileActions {
     if(trimmed.isEmpty())return fallback;
     return trimmed.length()>max?trimmed.substring(0,max):trimmed;
   }
+  /** "ইউটিউব খোলো", "the YouTube app" and "my calculator" all become the launcher label. */
+  static String appQuery(String raw){
+    String name=normalize(raw).replaceAll("^[\"'“”]|[\"'“”]$","").replaceAll("\\s+"," ").trim();
+    for(String[] alias:APP_ALIASES)if(normalize(alias[0]).equals(name))return alias[1];
+    name=name.replaceAll("^(?:the|a|an|my)\\s+","").replaceAll("\\s+(?:app|application)$","").replaceAll("\\s+"," ").trim();
+    for(String[] alias:APP_ALIASES)if(normalize(alias[0]).equals(name))return alias[1];
+    return name;
+  }
+
   private void openApp(String id,String input){
-    String app=normalize(input);if(app.isEmpty()||app.length()>100){finish(id,"invalid","Say which app to open.");return;}
+    String raw=limit(input,100,"");
+    if(raw.isEmpty()){finish(id,"invalid","Say which app to open, for example “open YouTube”.");return;}
+    String app=appQuery(raw);
+    if(app.isEmpty()||app.matches("(?iu)it|that|this|app|the app")){finish(id,"invalid","Say the app's name as it appears on your home screen, for example YouTube, WhatsApp or Calculator.");return;}
     Intent intent=null;
     if(Arrays.asList("wp","wa","whats app","whatsapp","व्हाट्सएप").contains(app)){
-      String pkg=whatsapp();if(pkg==null){finish(id,"not_installed","WhatsApp is not installed on this Android device.");return;}intent=activity.getPackageManager().getLaunchIntentForPackage(pkg);if(intent==null)intent=new Intent(Intent.ACTION_VIEW,Uri.parse("https://wa.me/")).setPackage(pkg);
-    }else if(Arrays.asList("youtube","you tube","यूट्यूब").contains(app))intent=new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.youtube.com")).setPackage(launcher.installed("com.google.android.youtube")?"com.google.android.youtube":launcher.installed("com.android.chrome")?"com.android.chrome":null);
-    else if(Arrays.asList("chrome","google chrome","browser","क्रोम").contains(app))intent=new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com")).setPackage(launcher.installed("com.android.chrome")?"com.android.chrome":null);
-    else {
-      intent=launcher.app(input);
+      String pkg=whatsapp();if(pkg==null){finish(id,"not_installed","WhatsApp is not installed on this Android device.");return;}
+      intent=activity.getPackageManager().getLaunchIntentForPackage(pkg);
+      if(intent==null)intent=new Intent(Intent.ACTION_VIEW,Uri.parse("https://wa.me/")).setPackage(pkg);
+    }else if(Arrays.asList("youtube","you tube","यूट्यूब").contains(app)){
+      intent=youtubeHome();
+    }else if(Arrays.asList("chrome","google chrome","browser","क्रोम").contains(app)){
+      intent=new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com")).setPackage(launcher.installed("com.android.chrome")?"com.android.chrome":null);
+    }else if(app.equals("camera")||app.equals("कैमरा")){
+      intent=new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
+    }else{
+      intent=launcher.app(app);
+      if(intent==null)intent=launcher.app(app+"s");
       if(intent==null)intent=systemApp(app);
+      if(intent==null)intent=webApp(app);
+      if(intent==null){
+        String suggestions=closestApps(app);
+        finish(id,"not_installed",suggestions.isEmpty()
+          ?"No installed app matches “"+raw+"”. Say the exact name shown under its icon."
+          :"No installed app matches “"+raw+"”. Did you mean "+suggestions+"?",json("suggestions",suggestions));
+        return;
+      }
     }
-    if(intent==null){finish(id,"not_installed","No installed app matches that name. Say the exact app name shown on your home screen.");return;}
-    boolean opened=launcher.open(intent);finish(id,opened?"opened":"unavailable",opened?"Opened "+input+".":"Android could not open "+input+".");
+    boolean opened=launcher.open(intent);
+    // Some devices have no STILL_IMAGE_CAMERA handler; the capture intent usually still opens.
+    if(!opened&&"camera".equals(app))opened=launcher.open(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
+    finish(id,opened?"opened":"unavailable",opened?"Opened "+raw+".":"Android refused to open “"+raw+"”. Try again, or open it from your home screen.",json("app",app));
   }
+
+  /** YouTube home that still works when the app is missing (browser fallback). */
+  private Intent youtubeHome(){
+    if(launcher.installed("com.google.android.youtube")){
+      Intent app=activity.getPackageManager().getLaunchIntentForPackage("com.google.android.youtube");
+      if(app!=null)return app;
+      return new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.youtube.com")).setPackage("com.google.android.youtube");
+    }
+    if(launcher.installed("com.android.chrome"))return new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.youtube.com")).setPackage("com.android.chrome");
+    return new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.youtube.com"));
+  }
+
+  /** Popular services that can still open in the browser when their app is absent. */
+  private Intent webApp(String app){
+    String site=null;
+    if(app.equals("facebook"))site="https://www.facebook.com";
+    else if(app.equals("instagram"))site="https://www.instagram.com";
+    else if(app.equals("spotify"))site="https://open.spotify.com";
+    else if(app.equals("twitter")||app.equals("x"))site="https://x.com";
+    else if(app.equals("threads"))site="https://www.threads.net";
+    else if(app.equals("snapchat"))site="https://www.snapchat.com";
+    else if(app.equals("netflix"))site="https://www.netflix.com";
+    else if(app.equals("amazon"))site="https://www.amazon.in";
+    else if(app.equals("flipkart"))site="https://www.flipkart.com";
+    else if(app.equals("reddit"))site="https://www.reddit.com";
+    else if(app.equals("linkedin"))site="https://www.linkedin.com";
+    else return null;
+    Intent intent=new Intent(Intent.ACTION_VIEW,Uri.parse(site));
+    if(launcher.installed("com.android.chrome"))intent.setPackage("com.android.chrome");
+    return intent;
+  }
+
+  /** Up to three installed labels close to what the user said, for an honest "did you mean". */
+  private String closestApps(String app){
+    try{
+      PackageManager pm=activity.getPackageManager();
+      Intent main=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+      String wanted=normalize(app);
+      List<String> scored=new ArrayList<>();
+      for(ResolveInfo info:pm.queryIntentActivities(main,0)){
+        if(!info.activityInfo.exported)continue;
+        String label=info.loadLabel(pm).toString();
+        String low=normalize(label);
+        if(low.isEmpty())continue;
+        if(low.startsWith(wanted)||low.contains(wanted)||wanted.contains(low))scored.add(label);
+        if(scored.size()>=3)break;
+      }
+      StringBuilder out=new StringBuilder();
+      for(String label:scored){if(out.length()>0)out.append(", ");out.append(label);}
+      return out.toString();
+    }catch(RuntimeException ignored){return "";}
+  }
+
   private Intent systemApp(String app){
-    String category=null;
     if(app.equals("phone")||app.equals("dialer")||app.equals("calls"))return new Intent(Intent.ACTION_DIAL);
     if(app.equals("settings")||app.equals("system settings"))return new Intent(Settings.ACTION_SETTINGS);
     if(app.equals("camera"))return new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
+    if(app.equals("clock")||app.equals("alarm")||app.equals("alarms"))return new Intent(AlarmClock.ACTION_SHOW_ALARMS);
+    String category=null;
     if(app.contains("calendar"))category=Intent.CATEGORY_APP_CALENDAR;
     else if(app.contains("calculator"))category=Intent.CATEGORY_APP_CALCULATOR;
     else if(app.contains("contact"))category=Intent.CATEGORY_APP_CONTACTS;
@@ -840,6 +970,7 @@ public final class MobileActions {
     else if(app.contains("music")||app.contains("song"))category=Intent.CATEGORY_APP_MUSIC;
     else if(app.contains("store")||app.contains("play store"))category=Intent.CATEGORY_APP_MARKET;
     else if(app.contains("file"))category=Intent.CATEGORY_APP_FILES;
+    else if(app.contains("browser"))category=Intent.CATEGORY_APP_BROWSER;
     else return null;
     Intent intent=new Intent(Intent.ACTION_MAIN).addCategory(category);
     return activity.getPackageManager().resolveActivity(intent,0)==null?null:intent;

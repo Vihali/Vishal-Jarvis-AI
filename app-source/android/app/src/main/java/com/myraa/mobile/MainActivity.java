@@ -54,6 +54,7 @@ public class MainActivity extends Activity {
   private MobileActions mobileActions;
   private Runnable pendingUiAction;
   private boolean allowBackgroundLive;
+  private boolean stopLiveRegistered;
   private final BroadcastReceiver stopLiveReceiver=new BroadcastReceiver(){@Override public void onReceive(Context context,Intent intent){cancelLive();if(web!=null)web.evaluateJavascript("window.dispatchEvent(new Event('myraa:stop-live'))",null);}};
   private WebView web;
   private SharedPreferences prefs;
@@ -104,8 +105,11 @@ public class MainActivity extends Activity {
       if(waiter!=null)waiter.complete(result);
       emit(json("type","mobile-action-result","id",id,"result",result));
     });
-    if(Build.VERSION.SDK_INT>=33)registerReceiver(stopLiveReceiver,new IntentFilter(LiveVoiceService.STOP),Context.RECEIVER_NOT_EXPORTED);
-    else registerReceiver(stopLiveReceiver,new IntentFilter(LiveVoiceService.STOP));
+    if(!stopLiveRegistered){
+      if(Build.VERSION.SDK_INT>=33)registerReceiver(stopLiveReceiver,new IntentFilter(LiveVoiceService.STOP),Context.RECEIVER_NOT_EXPORTED);
+      else registerReceiver(stopLiveReceiver,new IntentFilter(LiveVoiceService.STOP));
+      stopLiveRegistered=true;
+    }
     createWebView();
   }
 
@@ -115,6 +119,7 @@ public class MainActivity extends Activity {
       if (provider != null && Integer.parseInt(provider.versionName.split("\\.")[0]) < 100) {
         showWebViewError("Update Android System WebView to version 100 or later, then tap to retry. Your settings and conversations are safe."); return;
       }
+      if (web != null) { setContentView(web); return; }
       web = new WebView(this);
     } catch (RuntimeException error) {
       showWebViewError("Android WebView could not start. Check that Android System WebView is installed and enabled, then tap to retry."); return;
@@ -189,7 +194,12 @@ public class MainActivity extends Activity {
               checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
               request.getResources().length == 1 && PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(request.getResources()[0]))
             request.grant(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-          else request.deny();
+          else {
+            request.deny();
+            // A silent denial looks like a broken voice button; tell the user what to allow.
+            if (foreground) emit(json("type", "error", "service", "live", "message",
+              "Microphone access was blocked. Allow Microphone in Settings → Permissions, then tap Talk again."));
+          }
         });
       }
     });
@@ -217,7 +227,7 @@ public class MainActivity extends Activity {
     JSONObject value = json("model", prefs.getString("model", "gemini-3.5-flash"), "quality", prefs.getString("quality", "low"),
       "language", prefs.getString("language", "bn-IN"), "spokenReplies", prefs.getBoolean("spokenReplies", false),
       "keyConfigured", prefs.contains("keyCipher"), "keyVerified", prefs.getLong("keyVerifiedAt", 0) > 0 && prefs.getString("verifiedModel", "").equals(prefs.getString("model", "gemini-3.5-flash")),
-      "providerErrorCode", prefs.getString("providerErrorCode", ""), "ttsAvailable", ttsReady, "version", "1.5.0",
+      "providerErrorCode", prefs.getString("providerErrorCode", ""), "ttsAvailable", ttsReady, "version", "1.5.1",
       "textScale", prefs.getInt("textScale", 100), "pendingTasks", AiTaskStore.get(this).pendingCount(),
       "floatingControlsAllowed", Settings.canDrawOverlays(this), "liveModel", prefs.getString("liveModel", "gemini-3.1-flash-live-preview"),
       "permissions", permissions, "memory", memoryArray());
@@ -338,7 +348,8 @@ public class MainActivity extends Activity {
     @JavascriptInterface public void mobileAction(String id,String name,String args) {
       if(args==null||args.length()>10000)return;
       runOnUiThread(()->{
-        if(!foreground&&!LiveVoiceService.overlayVisible){emit(json("type","mobile-action-result","id",id,"result",json("status","permission_required","message","Return to Vishal Jarvis or enable Floating voice controls in Settings to switch apps by voice while Vishal Jarvis is behind another app.")));return;}
+        if(!foreground&&!LiveVoiceService.overlayVisible){emit(json("type","mobile-action-result","id",id,"result",json("status","permission_required","message","Bring Vishal Jarvis back to the front, or allow Floating controls in Settings → Permissions, so it can switch apps for you.")));return;}
+        if(isFinishing()){emit(json("type","mobile-action-result","id",id,"result",json("status","unavailable","message","Vishal Jarvis is closing. Open it again and repeat the request.")));return;}
         try {
           if(!foreground&&"send_message".equals(new JSONObject(args).optString("action"))){
             if(pendingUiAction!=null){emit(json("type","mobile-action-result","id",id,"result",json("status","busy","message","Finish the current recipient selection first.")));return;}
@@ -554,7 +565,8 @@ public class MainActivity extends Activity {
             if (failure instanceof GeminiAccess.Failure) {
               GeminiAccess.Failure issue = (GeminiAccess.Failure)failure;
               SharedPreferences.Editor edit = prefs.edit().putString("providerErrorCode", issue.code);
-              if (issue.status != 429 && issue.status < 500) edit.putLong("keyVerifiedAt", 0);
+              boolean transientStatus = issue.status == 408 || issue.status == 409 || issue.status == 429 || issue.status >= 500;
+              if (!transientStatus) edit.putLong("keyVerifiedAt", 0);
               edit.commit();
             }
             AiTaskStore.Task failed = store.find(id);
@@ -590,8 +602,10 @@ public class MainActivity extends Activity {
         if (!foreground) waiter.complete(json("status", "permission_required", "message", "Open Vishal Jarvis to perform this phone action. Nothing was done in the background."));
         else mobileActions.execute(actionId, MobileTools.ACTION, payload);
       });
-      if (!waiter.latch.await(120, TimeUnit.SECONDS)) {
-        return json("status", "timeout", "message", "That action did not finish. If a chooser or permission prompt opened, answer it and ask again.");
+      if (!waiter.latch.await(45, TimeUnit.SECONDS)) {
+        // Never leave the action dangling: cancel it so a stale chooser cannot block the next one.
+        runOnUiThread(() -> { mobileActions.cancel(actionId); });
+        return json("status", "timeout", "message", "That action did not finish in time. If a chooser or permission prompt is open, answer it and ask again.");
       }
       JSONObject result = waiter.value;
       return result == null ? json("status", "failed", "message", "Android returned no result for that action.") : result;
@@ -653,7 +667,7 @@ public class MainActivity extends Activity {
           if (!model.matches("[A-Za-z0-9._-]{1,100}")) model = "gemini-3.1-flash-live-preview";
           emit(json("type", "live-token", "id", id, "token", token, "model", model, "voice", "Aoede",
             "backgroundLive", allowBackgroundLive,
-            "instruction", MobileTools.systemPrompt(personality, memoryArray()) + "\nYou are on a live voice call: reply in one or two short spoken sentences, use the mobile_action tool for device tasks, and never invent a result. Messages stay drafts until the user taps Send, and calls only open the dialer."));
+            "instruction", MobileTools.systemPrompt(personality, memoryArray()) + "\nYou are on a live voice call: reply in one or two short spoken sentences, use the mobile_action tool for device tasks, and never invent a result. Messages stay drafts until the user taps Send, and calls only open the dialer. To open an app, call mobile_action with action open_app and the short name the user said (ইউটিউব, হোয়াটসঅ্যাপ, youtube kholo are all resolved on the phone); never say you cannot open apps. If the result says not_installed, read its suggestions back honestly."));
         });
       } catch (Exception error) {
         if (liveGeneration.get() == mine) emit(json("type", "live-error", "id", id, "message",
@@ -701,7 +715,8 @@ public class MainActivity extends Activity {
   }
   @Override protected void onStop(){super.onStop();if(!allowBackgroundLive&&pendingLiveId==null){cancelLive();if(web!=null)web.evaluateJavascript("window.dispatchEvent(new CustomEvent('myraa:lifecycle',{detail:{active:false}}))",null);}}
   @Override protected void onDestroy() {
-    pendingUiAction=null;if(mobileActions!=null)mobileActions.close();try{unregisterReceiver(stopLiveReceiver);}catch(IllegalArgumentException ignored){}
+    pendingUiAction=null;if(mobileActions!=null)mobileActions.close();
+    if(stopLiveRegistered){try{unregisterReceiver(stopLiveReceiver);}catch(IllegalArgumentException ignored){}stopLiveRegistered=false;}
     cancelLive(); liveNetwork.shutdownNow();
     synchronized (settingsLock) { settingsGeneration.incrementAndGet(); if (settingsConnection != null) settingsConnection.disconnect(); }
     settingsNetwork.shutdownNow();
@@ -718,8 +733,8 @@ public class MainActivity extends Activity {
     }
     AiTaskEvents.visible = false; AiTaskEvents.detach(taskListener);
     network.shutdownNow();
-    if (tts != null) { tts.stop(); tts.shutdown(); }
-    if (web != null) { web.removeJavascriptInterface("MyraaNative"); web.destroy(); web = null; }
+    if (isFinishing() && tts != null) { tts.stop(); tts.shutdown(); tts = null; ttsReady = false; }
+    if (isFinishing() && web != null) { web.removeJavascriptInterface("MyraaNative"); web.destroy(); web = null; }
     super.onDestroy();
   }
 }
