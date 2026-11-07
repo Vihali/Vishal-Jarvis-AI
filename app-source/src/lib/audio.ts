@@ -255,8 +255,8 @@ export class MyraaAudioSession {
     if (!bytes.length) return;
     this.lastNativeAt = Date.now();
     const floats = pcm16ToFloats(bytes);
-    const shouldForward = this.updateVoiceActivity(floats) || speechHint;
-    if (!shouldForward) return;
+    this.updateVoiceActivity(floats);
+    void speechHint;
     if (this.ws && this.ws.readyState === WebSocket.OPEN && this.currentState !== 'disconnected' && this.currentState !== 'connecting') {
       this.ws.send(JSON.stringify({ audio: base64 }));
     }

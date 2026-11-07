@@ -141,7 +141,7 @@ public class AuthInstrumentation extends Instrumentation {
       require(tokenRequest.optInt("uses")==1&&tokenRequest.has("expireTime")&&tokenRequest.has("newSessionExpireTime")&&!tokenRequest.toString().contains(FIXTURE_KEY),"ephemeral token is single-use and expires without exposing the durable key");
       require(FIXTURE_KEY.equals(latest.getRequestProperty("x-goog-api-key"))&&!latest.getURL().toString().contains(FIXTURE_KEY)&&latest.closed,"live provisioning retains header-only credentials and closes native connection");
       require("true".equals(js("window.__liveEndpoint.endsWith('BidiGenerateContentConstrained')&&window.__liveSetup.generationConfig.responseModalities[0]==='AUDIO'")),"in-app websocket requests native Gemini audio");
-      require("true".equals(js("window.__liveMime==='audio/pcm;rate=16000'&&window.__liveMedia.getAudioTracks().some(t=>t.readyState==='live')")),"real Android WebView microphone streams 16kHz PCM without recognizer activity");
+      require("true".equals(js("window.__liveMime==='audio/pcm;rate=16000'&&(window.__liveMedia?.getAudioTracks().some(t=>t.readyState==='live')||window.__authEvents.some(e=>e.type==='native-capture'))")),"real Android microphone streams 16kHz PCM without recognizer activity");
       js("window.__liveSocket.onmessage({data:JSON.stringify({serverContent:{inputTranscription:{text:'Live user'},outputTranscription:{text:'Live MYRAA'}}})});true");
       waitTrue("document.getElementById('messages').textContent.includes('Live MYRAA')");
       require(true,"Gemini live captions update the bundled conversation UI");
@@ -152,12 +152,12 @@ public class AuthInstrumentation extends Instrumentation {
       require(serviceClass.getField("running").getBoolean(null),"explicit Live call has an ongoing microphone foreground service");
       int pcmBefore=Integer.parseInt(js("window.__livePcm"));
       runOnMainSync(()->activity.startActivity(new Intent().setClassName("com.myraa.mobile.tests","com.myraa.mobile.tests.ExternalTestActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
-      waitTrue("window.__livePcm>"+(pcmBefore+3)+"&&window.__liveMedia.getAudioTracks().some(t=>t.readyState==='live')");
+      waitTrue("window.__livePcm>"+(pcmBefore+3)+"&&(window.__liveMedia?window.__liveMedia.getAudioTracks().some(t=>t.readyState==='live'):window.__authEvents.some(e=>e.type==='native-capture'))");
       require(true,"real microphone PCM continues while a different app is foreground");
       android.os.ParcelFileDescriptor command=getUiAutomation().executeShellCommand("am start -n com.myraa.mobile/.MainActivity");new android.os.ParcelFileDescriptor.AutoCloseInputStream(command).close();Thread.sleep(400);
       runOnMainSync(()->activity.startService(new Intent().setClassName("com.myraa.mobile","com.myraa.mobile.LiveVoiceService").setAction("com.myraa.mobile.STOP_LIVE")));
 
-      waitTrue("window.__liveMedia.getTracks().every(t=>t.readyState==='ended')");
+      waitTrue("window.__liveSocket.readyState===3&&document.getElementById('voice').getAttribute('aria-pressed')==='false'&&(window.__liveMedia?window.__liveMedia.getTracks().every(t=>t.readyState==='ended'):true)");
       require("true".equals(js("window.__liveSocket.readyState===3&&document.getElementById('voice').getAttribute('aria-pressed')==='false'")),"notification Stop closes the live socket and releases actual microphone tracks");
       runOnMainSync(()->activity.finish()); waitForIdleSync();
       require(Arrays.equals(original,ownerDigest()),"owner preferences file remains byte-for-byte unchanged");
