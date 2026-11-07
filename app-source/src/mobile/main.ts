@@ -859,14 +859,14 @@ el('avatar').onpointermove = event => {
   system?.setPointer((event.clientX - box.left) / box.width * 2 - 1, 1 - (event.clientY - box.top) / box.height * 2);
 };
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { if (!backgroundLive && !permissionPrompt) stopVoice(); system?.stop(); bridge?.stopSpeech(); }
+  if (document.hidden) { if (!backgroundLive && !permissionPrompt) stopVoice(); system?.stop(); /* TTS is not stopped: Android speech continues in the background. */ }
   else system?.start();
 });
 window.addEventListener('myraa:lifecycle', event => {
   const detail = (event as CustomEvent).detail;
   foreground = !!detail?.active; permissionPrompt = !!detail?.permissionPrompt; backgroundLive = !!detail?.backgroundLive;
   if (!foreground && !backgroundLive && !detail?.permissionPrompt) stopVoice();
-  if (foreground) system?.start(); else { system?.stop(); bridge?.stopSpeech(); }
+  if (foreground) system?.start(); else system?.stop(); /* do not stop TTS/Live audio merely for backgrounding */
 });
 window.addEventListener('myraa:stop-live', () => { stopVoice(); notice('Live call stopped.'); });
 window.addEventListener('pagehide', () => { stopVoice(); generation++; system?.dispose(); });

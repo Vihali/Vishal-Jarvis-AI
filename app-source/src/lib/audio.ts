@@ -117,7 +117,7 @@ function pcm16ToFloats(uint8Array: Uint8Array): Float32Array {
   const int16 = new Int16Array(
     uint8Array.buffer,
     uint8Array.byteOffset,
-    uint8Array.byteLength / 2
+    Math.floor(uint8Array.byteLength / 2)
   );
   const floats = new Float32Array(int16.length);
   for (let i = 0; i < int16.length; i++) {
@@ -167,6 +167,146 @@ export interface AudioConnection {
   renewLive?(id: string): void;
 }
 
+
+/**
+ * Gapless, turn-aware PCM playback engine (24 kHz mono Int16 -> Float32).
+ *
+ * Root-cause fix for premature voice cut-off: an individual chunk ending is
+ * NOT the end of the AI response. Playback is only "finished" when BOTH
+ * (a) the server sent turnComplete for the current turn, AND
+ * (b) every scheduled source of that turn has actually ended.
+ * Every chunk is scheduled in arrival order on one monotonic timeline;
+ * chunks are never overwritten, and stale sources from an interrupted turn
+ * (older generation) can never mutate the current turn's state.
+ */
+export interface GaplessPcmPlayerHooks {
+  onTurnStarted?: () => void;
+  onTurnFinished?: () => void;
+}
+
+interface ScheduledSource {
+  stop: () => void;
+  disconnect?: () => void;
+  onended: (() => void) | null;
+}
+
+export class GaplessPcmPlayer {
+  /** Safety bound: 3 minutes of queued-but-unscheduled audio. */
+  static readonly MAX_QUEUED_SAMPLES = 24000 * 180;
+  private sources = new Set<ScheduledSource>();
+  private queue: Float32Array[] = [];
+  private queuedSamples = 0;
+  private nextStartTime = 0;
+  private generation = 0;
+  private turnComplete = false;
+  private turnActive = false;
+  private disposed = false;
+
+  constructor(
+    private readonly ctx: {
+      currentTime: number;
+      state: string;
+      createBuffer: (channels: number, length: number, sampleRate: number) => { duration: number; getChannelData: (channel: number) => Float32Array };
+      createBufferSource: () => any;
+      resume?: () => Promise<void>;
+    },
+    private readonly destination: unknown,
+    private readonly hooks: GaplessPcmPlayerHooks = {},
+  ) {}
+
+  get scheduledCount(): number { return this.sources.size; }
+  get queuedCount(): number { return this.queue.length; }
+  get hasPendingAudio(): boolean { return this.turnActive || this.sources.size > 0 || this.queue.length > 0; }
+  get isTurnComplete(): boolean { return this.turnComplete; }
+
+  enqueue(samples: Float32Array): void {
+    if (this.disposed || !samples.length) return;
+    if (!this.turnActive) {
+      // First chunk of a new turn (also the path after a finished turn).
+      this.turnActive = true;
+      this.turnComplete = false;
+      this.hooks.onTurnStarted?.();
+    }
+    this.queue.push(samples);
+    this.queuedSamples += samples.length;
+    // Never silently discard: if a pathological peer floods faster than the
+    // bound, drop only the oldest *unscheduled* audio and keep playing.
+    while (this.queuedSamples > GaplessPcmPlayer.MAX_QUEUED_SAMPLES && this.queue.length > 1) {
+      this.queuedSamples -= this.queue.shift()!.length;
+      console.warn('[Audio] Playback queue bound reached; dropping oldest unscheduled chunk.');
+    }
+    this.pump();
+  }
+
+  markTurnComplete(): void {
+    this.turnComplete = true;
+    this.maybeFinishTurn();
+  }
+
+  /** Genuine barge-in / user stop only. Never called for a chunk ending. */
+  interrupt(): void {
+    this.generation += 1;
+    for (const source of this.sources) {
+      try { source.onended = null; source.stop(); } catch { /* already ended */ }
+      try { source.disconnect?.(); } catch { /* noop */ }
+    }
+    this.sources.clear();
+    this.queue = [];
+    this.queuedSamples = 0;
+    this.nextStartTime = 0;
+    this.turnComplete = false;
+    this.turnActive = false;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.interrupt();
+  }
+
+  private pump(): void {
+    if (this.ctx.state !== 'running') {
+      // A suspended/interrupted context (background, audio-focus loss) keeps
+      // its timeline frozen, so scheduling stays sequential; also ask it to
+      // resume so queued speech continues instead of silently stalling.
+      try { void this.ctx.resume?.()?.catch(() => undefined); } catch { /* noop */ }
+    }
+    while (this.queue.length) {
+      const floats = this.queue.shift()!;
+      this.queuedSamples -= floats.length;
+      const generation = this.generation;
+      try {
+        const buffer = this.ctx.createBuffer(1, floats.length, 24000);
+        buffer.getChannelData(0).set(floats);
+        const source = this.ctx.createBufferSource() as ScheduledSource & { buffer: unknown; connect: (node: unknown) => void; start: (when: number) => void };
+        source.buffer = buffer;
+        source.connect(this.destination);
+        const currentTime = this.ctx.currentTime;
+        if (this.nextStartTime <= currentTime) this.nextStartTime = currentTime + 0.03;
+        source.onended = () => {
+          if (generation !== this.generation) return; // stale, interrupted turn
+          this.sources.delete(source);
+          this.maybeFinishTurn();
+        };
+        source.start(this.nextStartTime);
+        this.nextStartTime += buffer.duration;
+        this.sources.add(source);
+      } catch (error) {
+        // One bad chunk must not discard the rest of the response.
+        console.error('PCM chunk scheduling failed; continuing with next chunk:', error);
+      }
+    }
+  }
+
+  private maybeFinishTurn(): void {
+    if (!this.turnActive || !this.turnComplete) return;
+    if (this.sources.size > 0 || this.queue.length > 0) return;
+    this.turnActive = false;
+    this.turnComplete = false;
+    this.nextStartTime = 0;
+    this.hooks.onTurnFinished?.();
+  }
+}
+
 export class MyraaAudioSession {
   private ws: AudioSocket | null = null;
   
@@ -185,9 +325,11 @@ export class MyraaAudioSession {
   private outputGainNode: GainNode | null = null;
   private pitchShifter: PitchShifter | null = null;
   
-  // Buffering / Playback details
-  private nextStartTime = 0;
-  private activeSources: AudioBufferSourceNode[] = [];
+  // Buffering / Playback details (turn-aware gapless engine; see above)
+  private player: GaplessPcmPlayer | null = null;
+  private preContextChunks: Float32Array[] = [];
+  private deferredDisconnect = false;
+  private pitchSemitones = 0;
   private userSpeaking = false;
   private voiceFrames = 0;
   private lastVoiceAt = 0;
@@ -246,6 +388,16 @@ export class MyraaAudioSession {
     return this.currentState;
   }
 
+  private outputActive(): boolean {
+    return !!this.player?.hasPendingAudio;
+  }
+
+  private newPitchShifter(): PitchShifter | null {
+    return this.pitchSemitones > 0
+      ? new PitchShifter(Math.pow(2, Math.min(5, this.pitchSemitones) / 12))
+      : null;
+  }
+
   public nativeCaptureActive(): boolean {
     return this.usingNativeCapture;
   }
@@ -255,9 +407,15 @@ export class MyraaAudioSession {
     if (!bytes.length) return;
     this.lastNativeAt = Date.now();
     const floats = pcm16ToFloats(bytes);
-    this.updateVoiceActivity(floats);
+    // Respect the VAD decision. Previously every native frame was forwarded
+    // unconditionally, so the model's own loudspeaker output reached Gemini,
+    // whose server VAD (START_OF_ACTIVITY_INTERRUPTS) aborted generation
+    // mid-response -- the confirmed "voice cuts off after the first
+    // sentence" bug. Only genuine user speech (barge-in) is forwarded while
+    // the model is speaking. The native speech hint alone never forwards.
+    const shouldForward = this.updateVoiceActivity(floats);
     void speechHint;
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.currentState !== 'disconnected' && this.currentState !== 'connecting') {
+    if (shouldForward && this.ws && this.ws.readyState === WebSocket.OPEN && this.currentState !== 'disconnected' && this.currentState !== 'connecting') {
       this.ws.send(JSON.stringify({ audio: base64 }));
     }
   }
@@ -370,6 +528,16 @@ export class MyraaAudioSession {
           // Guard against early user disconnect during connection setup
           if (!this.isActivated) return;
 
+          // Transport recovery re-fires onopen for the replacement socket.
+          // The existing graph (and any in-flight playback on it) must be
+          // reused: rebuilding it created a second playback engine and
+          // orphaned scheduled audio on the abandoned context.
+          if (this.outputAudioCtx && this.player) {
+            if (this.outputAudioCtx.state !== "running") await this.outputAudioCtx.resume().catch(() => {});
+            const inputCtx = this.inputAudioCtx; if (inputCtx && inputCtx.state !== "running") await inputCtx.resume().catch(() => {});
+            return;
+          }
+
           // Safe, cross-browser AudioContext initialization
           const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
           if (!AudioContextClass) {
@@ -395,18 +563,39 @@ export class MyraaAudioSession {
           
           this.outputGainNode.connect(this.outputAnalyser);
           this.outputAnalyser.connect(this.outputAudioCtx.destination);
+          // If Android suspends/interrupts the context (background, focus
+          // loss), recover it while a session is live instead of letting
+          // scheduled speech stall forever.
+          this.outputAudioCtx.onstatechange = () => {
+            if (this.isActivated && this.outputAudioCtx && this.outputAudioCtx.state !== "running") {
+              void this.outputAudioCtx.resume().catch(() => {});
+            }
+          };
+          this.player = new GaplessPcmPlayer(this.outputAudioCtx, this.outputGainNode, {
+            onTurnStarted: () => {
+              this.outputSpeechStartedAt = performance.now();
+              if (this.currentState !== "speaking") this.setState("speaking");
+            },
+            onTurnFinished: () => {
+              this.outputSpeechStartedAt = 0;
+              if (this.currentState === "speaking") this.setState("listening");
+              if (this.deferredDisconnect) { this.deferredDisconnect = false; this.disconnect(); }
+            },
+          });
           this.outputReady = true;
+          // Flush any chunks that arrived before the graph existed.
+          for (const chunk of this.preContextChunks.splice(0)) this.player.enqueue(chunk);
           this.flushPendingTextMessages();
           // Optional pitch lift (Settings → Voice → Voice pitch).
           this.pitchShifter = null;
           if (this.connection) {
-            const semitones = this.connection.pitch || 0;
-            this.pitchShifter = semitones > 0 ? new PitchShifter(Math.pow(2, Math.min(5, semitones) / 12)) : null;
+            this.pitchSemitones = this.connection.pitch || 0;
+            this.pitchShifter = this.newPitchShifter();
           } else void fetch("/api/app-settings")
             .then((r) => (r.ok ? r.json() : null))
             .then((s) => {
-              const semitones = Number(s?.voice?.pitch) || 0;
-              this.pitchShifter = semitones > 0 ? new PitchShifter(Math.pow(2, Math.min(5, semitones) / 12)) : null;
+              this.pitchSemitones = Number(s?.voice?.pitch) || 0;
+              this.pitchShifter = this.newPitchShifter();
             })
             .catch(() => undefined);
 
@@ -518,7 +707,10 @@ export class MyraaAudioSession {
               this.setState("listening");
               this.flushPendingTextMessages();
             } else if (data.status === "session_closed") {
-              this.disconnect();
+              // Never close the output context over speech that is still
+              // queued: finish the current turn first, then disconnect.
+              if (this.outputActive()) this.deferredDisconnect = true;
+              else this.disconnect();
             }
             return;
           }
@@ -533,14 +725,12 @@ export class MyraaAudioSession {
             this.handleInterruption();
           }
 
-          // Turn complete
+          // Turn complete: the server will send no more audio for this
+          // turn, but already-scheduled audio may still be playing. The
+          // playback engine flips back to listening only after it drains.
           if (data.type === "turnComplete") {
-            // Once Myraa completes speaking, change visual state back to listening
-            setTimeout(() => {
-              if (this.activeSources.length === 0 && this.currentState === "speaking") {
-                this.setState("listening");
-              }
-            }, 100);
+            if (this.player) this.player.markTurnComplete();
+            else if (this.currentState === "speaking") this.setState("listening");
           }
 
           // Handle live captions transcription
@@ -604,23 +794,18 @@ export class MyraaAudioSession {
     }
   }
 
-  // Interruption triggers: stops all active audio players immediately
+  // Interruption triggers: stops all active audio players immediately.
+  // Only a genuine barge-in, an explicit user stop or disconnect may call
+  // this -- never a single chunk finishing.
   private handleInterruption() {
-    console.log("[Audio] Interruption signal received; flushing play logs.");
-    
-    // Stop all playing nodes
-    this.activeSources.forEach((source) => {
-      try {
-        source.stop();
-      } catch (err) {
-        // Already finished or stopped
-      }
-    });
-    this.activeSources = [];
-    this.nextStartTime = 0;
+    console.log("[Audio] Interruption signal received; flushing playback queue.");
+    this.player?.interrupt();
+    this.preContextChunks = [];
+    this.deferredDisconnect = false;
+    // Pitch-shifter state belongs to the interrupted turn; rebuild it so the
+    // next turn does not start from stale delay-line audio.
+    this.pitchShifter = this.newPitchShifter();
     this.outputSpeechStartedAt = 0;
-    
-    // Set state back to user listening
     this.setState("listening");
   }
 
@@ -633,7 +818,7 @@ export class MyraaAudioSession {
     for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
     const rms = Math.sqrt(energy / Math.max(1, samples.length));
     const timestamp = performance.now();
-    const myraaOutputActive = this.currentState === "speaking" || this.activeSources.length > 0;
+    const myraaOutputActive = this.currentState === "speaking" || this.outputActive();
 
     // Full-duplex speaker playback can leak back into the microphone even with
     // browser echo cancellation enabled. Do not feed that echo to Gemini. A
@@ -697,57 +882,27 @@ export class MyraaAudioSession {
     this.ws.send(JSON.stringify({ type: "conversationEvent", event, rms }));
   }
 
-  // Direct raw PCM chunk scheduled playback at 24kHz
+  // Direct raw PCM chunk playback at 24kHz via the turn-aware engine.
   private playAudioPCMChunk(base64Audio: string) {
-    if (!this.outputAudioCtx || !this.outputGainNode) return;
-
     try {
-      if (this.currentState !== "speaking" || this.activeSources.length === 0) {
-        this.outputSpeechStartedAt = performance.now();
-      }
-      this.setState("speaking");
       const uint8Array = base64ToUint8Array(base64Audio);
+      if (!uint8Array.length) return;
       const raw = pcm16ToFloats(uint8Array);
       const floats = this.pitchShifter ? this.pitchShifter.process(raw) : raw;
-
-      // Create AudioBuffer of 24000Hz (the exact playback sample rate of Gemini outputs)
-      const buffer = this.outputAudioCtx.createBuffer(1, floats.length, 24000);
-      buffer.getChannelData(0).set(floats);
-
-      // Create Buffer source
-      const source = this.outputAudioCtx.createBufferSource();
-      source.buffer = buffer;
-
-      // Connect source to gain which is routed to analyser & speakers
-      source.connect(this.outputGainNode);
-
-      const currentTime = this.outputAudioCtx.currentTime;
-      
-      // Gapless scheduler sync
-      if (this.nextStartTime < currentTime) {
-        // Start fresh: 30ms ahead to bridge schedule timing
-        this.nextStartTime = currentTime + 0.03;
+      if (!this.player) {
+        // Graph not ready yet: preserve the chunk (in order) instead of
+        // silently discarding the start of the response.
+        this.preContextChunks.push(floats);
+        let queued = this.preContextChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        while (queued > GaplessPcmPlayer.MAX_QUEUED_SAMPLES && this.preContextChunks.length > 1) {
+          queued -= this.preContextChunks.shift()!.length;
+        }
+        return;
       }
-
-      source.start(this.nextStartTime);
-      this.nextStartTime += buffer.duration;
-
-      // Keep reference to handle real-time interruptions
-      source.onended = () => {
-        const index = this.activeSources.indexOf(source);
-        if (index > -1) {
-          this.activeSources.splice(index, 1);
-        }
-        
-        // If there are no more active play nodes, revert state back to listening
-        if (this.activeSources.length === 0 && this.currentState === "speaking") {
-          this.outputSpeechStartedAt = 0;
-          this.setState("listening");
-        }
-      };
-
-      this.activeSources.push(source);
-
+      if (this.outputAudioCtx && this.outputAudioCtx.state !== "running") {
+        void this.outputAudioCtx.resume().catch(() => {});
+      }
+      this.player.enqueue(floats);
     } catch (playbackError) {
       console.error("PCM Chunk buffering/playback failed:", playbackError);
     }
@@ -809,8 +964,11 @@ export class MyraaAudioSession {
       this.outputAudioCtx = null;
     }
 
-    this.activeSources = [];
-    this.nextStartTime = 0;
+    this.player?.dispose();
+    this.player = null;
+    this.preContextChunks = [];
+    this.deferredDisconnect = false;
+    this.pitchShifter = null;
     this.userSpeaking = false;
     this.voiceFrames = 0;
     this.lastVoiceAt = 0;
