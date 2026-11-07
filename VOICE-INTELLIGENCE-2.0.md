@@ -60,7 +60,8 @@ Unchanged safety contract:
 | Phonetic key: Labanya / Labonya / Labonno / Lavanya / Labanyo | Shared key `laban` |
 | Vite mobile production bundle | Succeeded |
 | `HostVoiceTests.java` (matcher + SNR/VAD/AGC/FFT) | Source included; **not executed here** — this environment has no JDK and GitHub release assets are blocked |
-| GitHub Actions APK compile (`javac` of all new Java) | See the workflow run linked with this change |
+| GitHub Actions APK compile (`javac`, D8, AAPT2, apksigner) | **Succeeded** in 1m14s — job `Build Android APK` and `Verify APK` both passed |
+| Verified APK artifact | [Vishal-Jarvis-APK](https://github.com/Vihali/Vishal-Jarvis-AI/actions/runs/42374746171/artifacts/13575007570) from run [42374746171](https://github.com/Vihali/Vishal-Jarvis-AI/actions/runs/42374746171). Artifact SHA-256 `7ba3034a49bb51043fac5ba3ca5a5c91bd0b35786367ebb0b6a45875520e2912`. GitHub login is required to download Actions artifacts. |
 | Quiet / crowd / traffic / wind / multi-speaker on a physical phone | **Not run** — no Android device or emulator in this environment |
 | Live Gemini recognition accuracy / latency on device | **Not run** — no API key and no device |
 | Hardware NS/AEC/AGC on a specific phone | Device-dependent; the app records support in Settings diagnostics |
