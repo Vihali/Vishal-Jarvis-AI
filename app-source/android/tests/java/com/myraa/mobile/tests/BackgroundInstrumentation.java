@@ -75,6 +75,20 @@ public class BackgroundInstrumentation extends Instrumentation {
   }
   private void force(Object task) throws Exception { shell("cmd jobscheduler run -f com.myraa.mobile "+jobId(task)); }
   /**
+   * Android may refuse a single forced run while the previous job is still
+   * unwinding, so keep asking until the task completes instead of failing on the
+   * first attempt.
+   */
+  private void complete(Object task,String id,String label,int seconds) throws Exception {
+    long end=System.currentTimeMillis()+seconds*1000L;
+    while(System.currentTimeMillis()<end) {
+      if("completed".equals(status(id)))return;
+      try { force(task); } catch(Exception ignored) { }
+      Thread.sleep(1500);
+    }
+    throw new Exception(label+" timed out");
+  }
+  /**
    * Opens the app window. MainActivity is singleTask, so an already running task
    * would only receive onNewIntent and startActivitySync would wait forever; the
    * clear-task flag forces a fresh instance, and the wait itself is bounded.
@@ -163,7 +177,7 @@ public class BackgroundInstrumentation extends Instrumentation {
       final Activity doomed=activity; activity.runOnUiThread(doomed::finish);
       until(doomed::isDestroyed,"Activity destruction",20);
       until(()->"queued".equals(status(second)),"handoff to persistent queue",20);
-      Object secondTask=find(second); force(secondTask); until(()->"completed".equals(status(second)),"resumed background job",45);
+      Object secondTask=find(second); complete(secondTask,second,"resumed background job",75);
       check(countHistory(second)==2,"job resumes after Activity destruction and saves exactly one answer");
 
       // A temporary provider disconnect is retained and retried, not dropped.
@@ -171,12 +185,12 @@ public class BackgroundInstrumentation extends Instrumentation {
       String third=UUID.randomUUID().toString(); failNext=1; Object thirdTask=enqueue(third,"Retry this connection");
       int before=requests.get(); force(thirdTask);
       until(()->requests.get()>before&&"queued".equals(status(third)),"transient failure retained",30);
-      force(thirdTask); until(()->"completed".equals(status(third)),"retry completion",45);
+      complete(thirdTask,third,"retry completion",75);
       check(countHistory(third)==2,"temporary network failure retries without duplicating history");
 
       phase("grounded research request");
       String research=UUID.randomUUID().toString(); Object researchTask=enqueue(research,"Research the latest weather today");
-      force(researchTask); until(()->"completed".equals(status(research)),"grounded research",45);
+      complete(researchTask,research,"grounded research",75);
       check(new JSONObject(lastBody).getJSONArray("tools").getJSONObject(0).has("google_search"),"time-sensitive research requests use Gemini Google Search grounding");
       check(historyText().contains("https://example.com/source"),"grounded source link is saved with the answer");
 
@@ -186,7 +200,7 @@ public class BackgroundInstrumentation extends Instrumentation {
       invoke(store,"running",new Class[]{String.class},recovery);
       invoke(store,"markToolStarted",new Class[]{String.class},recovery);
       invoke(store,"requeue",new Class[]{String.class,String.class},recovery,"interrupted");
-      force(recoveryTask); until(()->"completed".equals(status(recovery)),"safe tool recovery",45);
+      complete(recoveryTask,recovery,"safe tool recovery",75);
       check(!new JSONObject(lastBody).has("tools"),"interrupted phone actions are never automatically replayed");
       check(historyText().contains("did not repeat it"),"recovered answer warns that a previous phone action may have started");
 
