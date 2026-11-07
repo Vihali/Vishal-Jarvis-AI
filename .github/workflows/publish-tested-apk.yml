@@ -1,6 +1,9 @@
 name: Publish verified APK once
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/publish-tested-apk.yml
 permissions:
   contents: write
 jobs:
