@@ -237,6 +237,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      # The script time-boxes every phase itself, so a hung WebView or Activity
+      # fails with an annotation instead of silently consuming the job limit.
+      EMULATOR_LOG_DIR: /tmp/emulator
+      EMULATOR_TEST_BUDGET: '1200'
+      EMULATOR_TEST_TIMEOUT: '420'
+      EMULATOR_BOOT_TIMEOUT: '420'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -257,21 +264,28 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: bash app-source/scripts/run-emulator-tests.sh test-apks
-      - name: Attach emulator test results
+      - name: Attach emulator logs and test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Vishal-Jarvis-Emulator-Results
-          path: /tmp/*Instrumentation.log
+          path: |
+            /tmp/emulator/
+            /tmp/*Instrumentation.log
           if-no-files-found: ignore
       - name: Summarize any emulator test failure
         if: failure()
         shell: bash
         run: |
           shopt -s nullglob
-          for file in /tmp/*Instrumentation.log; do
-            if grep -qE '(^|[[:space:]])FAIL:|BACKGROUND_TESTS_FAILED' "$file" || ! grep -q 'INSTRUMENTATION_CODE: -1' "$file"; then
-              message=$(tail -c 6000 "$file")
+          files=(/tmp/emulator/*.log /tmp/emulator/logcat.txt /tmp/*Instrumentation.log)
+          if (( ${#files[@]} == 0 )); then
+            echo '::error title=Emulator tests::The emulator step ended before any test log was written. Check the emulator boot output in the step log.'
+            exit 0
+          fi
+          for file in "${files[@]}"; do
+            if grep -qE 'FAIL:|BACKGROUND_TESTS_FAILED|TIMEOUT after' "$file" || ! grep -q 'INSTRUMENTATION_CODE: -1' "$file"; then
+              message=$(tail -c 4000 "$file")
               message=${message//'%'/'%25'}
               message=${message//$'\n'/'%0A'}
               message=${message//$'\r'/'%0D'}
