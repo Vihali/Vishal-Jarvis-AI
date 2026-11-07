@@ -3,9 +3,26 @@
 This repository contains the existing Vishal Jarvis Android companion (`com.myraa.mobile`).
 The checked-in `app-source/` is the source of truth for the APK and the original
 `.github/workflows/android-build.yml` builds it. The `Vishal-Jarvis-Android-App-Source.zip`
-is a downloadable snapshot of that same source, not a second application. The 1.4 update
-continues from the source of the previously published 1.3 APK, including its existing
-interface, procedural 3D robot, voice, settings, memory and device actions.
+is a downloadable snapshot of that same source, not a second application. The 1.5 update
+continues from the source of the previously published 1.4 APK, including its existing
+interface, procedural 3D robot, voice, settings, memory, background tasks and device actions.
+
+## What changed in 1.5
+
+- **Play music and videos by name:** asking “play Millionaire on Spotify”, “play Triggered
+  Insaan” or “মিলিওনেয়ার গানটা চালাও” now starts playback instead of only opening the
+  YouTube home page. A new `play_media` device action sends Android's standard
+  `MEDIA_PLAY_FROM_SEARCH` browse intent, pinned to the player the user named (YouTube,
+  YouTube Music, Spotify, Amazon Prime Music, Gaana or JioSaavn) and falling back to the
+  best installed player when none is named. If a player cannot start playback directly, its
+  own search screen for that exact query opens instead. The app never claims a specific
+  track started: the result says `play_started` with the player, the query and whether it was
+  a direct start or a search screen. A named app that is not installed returns
+  `not_installed` rather than silently using a different one. Playback runs in the user's own
+  player and account; no media is downloaded, recorded or streamed by Vishal Jarvis.
+- The same capability is available in text chat (via the tool schema in `MobileTools.java`),
+  Live voice (via `LIVE_TOOLS`) and offline typed commands (`parsePlayMedia` in
+  `src/mobile/actions.ts`), so Bengali, Banglish and English phrasing all work.
 
 ## What changed in 1.4
 

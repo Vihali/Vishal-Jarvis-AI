@@ -152,10 +152,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force artifacts/android | Out-Null
-          $debug = 'Vishal-Jarvis-1.4.0-debug.apk'
+          $debug = 'Vishal-Jarvis-1.5.0-debug.apk'
           Copy-Item android/app/build/outputs/apk/debug/app-debug.apk "artifacts/android/$debug" -Force
           if ('${{ steps.signing.outputs.mode }}' -eq 'release') {
-            $name = 'Vishal-Jarvis-1.4.0-release.apk'
+            $name = 'Vishal-Jarvis-1.5.0-release.apk'
             Copy-Item android/app/build/outputs/apk/release/app-release.apk "artifacts/android/$name" -Force
           } else { $name = $debug }
           "apk_name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -173,7 +173,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed.' }
           $signature | Write-Host
           $badging = & (Join-Path $tools 'aapt2.exe') dump badging $apk
-          if ($LASTEXITCODE -ne 0 -or !($badging -match "package: name='com.myraa.mobile' versionCode='9'")) { throw 'Unexpected APK package or version.' }
+          if ($LASTEXITCODE -ne 0 -or !($badging -match "package: name='com.myraa.mobile' versionCode='10'")) { throw 'Unexpected APK package or version.' }
           $badging | Select-Object -First 12 | Write-Host
           Get-FileHash -LiteralPath $apk -Algorithm SHA256
           $previous = Join-Path $env:RUNNER_TEMP 'previous-apk'
@@ -198,7 +198,7 @@ jobs:
           @(
             '### APK verification',
             '- Package: `com.myraa.mobile`',
-            '- Version: `1.4.0` (9)',
+            '- Version: `1.5.0` (10)',
             '- Signing: `${{ steps.signing.outputs.mode }}`',
             "- Certificate match with v1.3.0: ``$compatible``",
             "- APK SHA-256: ``$((Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLower())``"
@@ -214,7 +214,7 @@ jobs:
         with:
           name: Vishal-Jarvis-Android-Tests
           path: |
-            app-source/artifacts/android/Vishal-Jarvis-1.4.0-debug.apk
+            app-source/artifacts/android/Vishal-Jarvis-1.5.0-debug.apk
             app-source/artifacts/android/Vishal-Jarvis-tests.apk
           if-no-files-found: error
       - name: Package the existing app source
@@ -320,7 +320,7 @@ jobs:
           test -s "dist/$APK_NAME"
           sha256sum "dist/$APK_NAME"
           cat > release-notes.md <<EOF_NOTES
-          Vishal Jarvis for Android **1.4.0**, built from the existing app.
+          Vishal Jarvis for Android **1.5.0**, built from the existing app.
 
           - Existing 3D character, interface, voice, device actions, settings and conversation history are retained.
           - Submitted text tasks are saved on the phone, run with a foreground notification when eligible, and are retried by Android's network-constrained persistent scheduler. Completion notifications open the saved answer.
@@ -334,12 +334,12 @@ jobs:
 
           **Install:** Download the APK below on your phone, allow installation from your browser when Android asks, and open it. Requires Android 8+, WebView 100+, OpenGL ES 3, internet, and your own Gemini API key.
 
-          Direct download: https://github.com/$REPO/releases/download/v1.4.0/$APK_NAME
+          Direct download: https://github.com/$REPO/releases/download/v1.5.0/$APK_NAME
           EOF_NOTES
-          if gh release view v1.4.0 --repo "$REPO" >/dev/null 2>&1; then
-            gh release edit v1.4.0 --repo "$REPO" --title 'Vishal Jarvis for Android 1.4.0' --notes-file release-notes.md --latest
+          if gh release view v1.5.0 --repo "$REPO" >/dev/null 2>&1; then
+            gh release edit v1.5.0 --repo "$REPO" --title 'Vishal Jarvis for Android 1.5.0' --notes-file release-notes.md --latest
           else
-            gh release create v1.4.0 --repo "$REPO" --target "$GITHUB_SHA" --title 'Vishal Jarvis for Android 1.4.0' --notes-file release-notes.md --latest
+            gh release create v1.5.0 --repo "$REPO" --target "$GITHUB_SHA" --title 'Vishal Jarvis for Android 1.5.0' --notes-file release-notes.md --latest
           fi
-          gh release upload v1.4.0 "dist/$APK_NAME" --repo "$REPO" --clobber
-          gh release view v1.4.0 --repo "$REPO" --json url,assets --jq '{url, assets: [.assets[].url]}'
+          gh release upload v1.5.0 "dist/$APK_NAME" --repo "$REPO" --clobber
+          gh release view v1.5.0 --repo "$REPO" --json url,assets --jq '{url, assets: [.assets[].url]}'

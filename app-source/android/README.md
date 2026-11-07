@@ -1,9 +1,23 @@
-# Vishal Jarvis Android 1.4
+# Vishal Jarvis Android 1.5
 
 The existing Android application keeps package ID `com.myraa.mobile`, Android 8 / API 26
 minimum, API 35 target, the bundled WebView/Three.js robot and the existing settings,
 live voice, memory and phone actions. Android System WebView 100+ and OpenGL ES 3 are
 required. Gemini requires the user's own API key and access to the configured model.
+
+## Music and video playback (1.5)
+
+`play_media` in `MobileActions` sends Android's standard
+`android.intent.action.MEDIA_PLAY_FROM_SEARCH` browse intent with
+`EXTRA_MEDIA_TITLE` and `SearchManager.QUERY`. The intent is pinned to one package
+(`com.google.android.youtube`, `com.google.android.apps.youtube.music`, `com.spotify.music`,
+`com.amazon.mp3`, `com.gaana`, `com.jio.media.ondemand`) when the user named a player, and is
+only sent when that app is installed and resolves the intent. When no player is named, the
+installed players are tried in that order. If a player does not accept the browse intent, its
+own search URL for the exact query opens instead. The result status is `play_started` with
+`data.mode` set to `direct` or `search`, or `not_installed` / `invalid`; the app never claims a
+specific track began. Playback happens inside the user's own player and account, and the app
+adds no media permission, storage access or media download.
 
 ## Background architecture
 
@@ -61,7 +75,7 @@ Android update and uninstalling the old app removes its local data.
    (the CI script demonstrates this), then run `gradle -p android :app:testDebugUnitTest :app:assembleDebug`.
 
 The old Windows `scripts/build-android.ps1` is retained as a standalone debug build path;
-it outputs `artifacts/android/Vishal-Jarvis-1.4.0-debug.apk`. The primary CI path uses Gradle.
+it outputs `artifacts/android/Vishal-Jarvis-1.5.0-debug.apk`. The primary CI path uses Gradle.
 
 The emulator suite uses fixture HTTPS responses and no real Google key; it covers screen-off
 completion, Activity destruction and scheduler handoff, retry, grounding, text export and

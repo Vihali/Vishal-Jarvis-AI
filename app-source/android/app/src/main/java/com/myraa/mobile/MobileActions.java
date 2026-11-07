@@ -2,6 +2,7 @@ package com.myraa.mobile;
 
 import android.Manifest;
 import android.app.*;
+import android.app.SearchManager;
 import android.content.*;
 import android.content.pm.*;
 import android.database.Cursor;
@@ -41,6 +42,17 @@ public final class MobileActions {
   private static final int MAX_APPS=150;
   private static final long PENDING_TTL=5*60*1000L;
   private static final String SMS_RECEIPT="com.myraa.mobile.SMS_RECEIPT";
+  /** Music players that accept media-browse intents, in the order I try them. */
+  private static final LinkedHashMap<String,String> PLAYERS=new LinkedHashMap<>();
+  private static final String[] PLAYER_ORDER={"youtube_music","youtube","spotify","prime_music","gaana","jiosaavn"};
+  static{
+    PLAYERS.put("youtube","com.google.android.youtube");
+    PLAYERS.put("youtube_music","com.google.android.apps.youtube.music");
+    PLAYERS.put("spotify","com.spotify.music");
+    PLAYERS.put("prime_music","com.amazon.mp3");
+    PLAYERS.put("gaana","com.gaana");
+    PLAYERS.put("jiosaavn","com.jio.media.ondemand");
+  }
 
   public interface Result { void complete(String id,JSONObject result); }
   public interface Launcher { boolean installed(String pkg); Intent app(String label); boolean open(Intent intent); }
@@ -200,6 +212,7 @@ public final class MobileActions {
         finish(id,opened?"opened":"unavailable",opened?(youtube?"YouTube":"Browser")+" search opened.":"No app can open this search on this device.");return;
       }
       if("open_url".equals(action)){openUrl(id,args.optString("url"));return;}
+      if("play_media".equals(action)){playMedia(id,args);return;}
       if("call".equals(action)){call(id,args.optString("recipient"),args.optString("sim"));return;}
       if("send_message".equals(action)){sendMessage(id,args);return;}
       if("cancel_send".equals(action)){cancelSend(id);return;}
@@ -218,7 +231,7 @@ public final class MobileActions {
       if("device_status".equals(action)){deviceStatus(id);return;}
       if("list_apps".equals(action)){listApps(id);return;}
       if("open_camera".equals(action)){openCamera(id);return;}
-      finish(id,"unsupported","Supported actions: open apps, open a web page, search YouTube/web, call a number or saved contact (direct call, optional SIM), send WhatsApp/Telegram/Instagram/Messenger/SMS messages after confirmation, flashlight, Wi-Fi and system panels, alarms, timers, calendar events, navigation, share, copy, media and volume control, device status, SIM info and installed apps.");
+      finish(id,"unsupported","Supported actions: open apps, open a web page, search YouTube/web, play a song or video in YouTube, YouTube Music, Spotify, Prime Music, Gaana or JioSaavn, call a number or saved contact (direct call, optional SIM), send WhatsApp/Telegram/Instagram/Messenger/SMS messages after confirmation, flashlight, Wi-Fi and system panels, alarms, timers, calendar events, navigation, share, copy, media and volume control, device status, SIM info and installed apps.");
     }catch(IllegalArgumentException e){finish(id,"invalid",e.getMessage());}catch(Exception e){finish(id,"failed","Android could not complete this action. Nothing was sent.");}
   }
 
@@ -428,7 +441,7 @@ public final class MobileActions {
     if(app.equals("telegram"))return "Telegram";
     if(app.equals("instagram"))return "Instagram";
     if(app.equals("messenger"))return "Messenger";
-    return app;
+    return appLabelStatic(app);
   }
 
   private String chatPackage(String app){
@@ -527,6 +540,84 @@ public final class MobileActions {
   private void openUrl(String id,String url){
     Intent intent=web(url);boolean opened=launcher.open(intent);
     finish(id,opened?"opened":"unavailable",opened?"Opened the link in your browser.":"No browser could open that link.");
+  }
+  private void playMedia(String id,JSONObject args){
+    String query=limit(args.optString("query"),200,""),app=normalize(args.optString("app"));
+    if(query.isEmpty()){finish(id,"invalid","Say the song, video or channel to play, for example “play Millionaire on Spotify”.");return;}
+    if(!app.isEmpty()&&!PLAYERS.containsKey(app)){
+      finish(id,"invalid","Music apps I can start: "+playerNames()+". Say one of them, or just name a song and I will use the best match.");return;
+    }
+    if(app.isEmpty()){
+      for(String candidate:PLAYER_ORDER){
+        if(!launcher.installed(PLAYERS.get(candidate)))continue;
+        if(play(id,candidate,query))return;
+      }
+      Intent webSearch=search("youtube",query);
+      if(launcher.installed("com.google.android.youtube"))webSearch.setPackage("com.google.android.youtube");
+      boolean opened=launcher.open(webSearch);
+      finish(id,opened?"search_opened":"unavailable",opened
+        ?"No music app could start directly, so I opened a YouTube search for “"+query+"”. Install Spotify, YouTube Music, Prime Music or Gaana for direct playback."
+        :"No music app is installed and no browser could open a search.",json("guidance","install_music_app"));
+      return;
+    }
+    if(!launcher.installed(PLAYERS.get(app))){
+      finish(id,"not_installed",appLabel(app)+" is not installed on this phone.",json("guidance","install_music_app"));
+      return;
+    }
+    play(id,app,query);
+  }
+  /** True when a player accepted the query. Reports a direct start and a search-screen open differently. */
+  private boolean play(String id,String app,String query){
+    Intent browse=browseIntent(app,query);
+    if(browse!=null&&launcher.open(browse)){
+      finish(id,"play_started","Asked "+appLabel(app)+" to play “"+query+"”."+playHint(app),json("player",appLabel(app),"query",query,"mode","direct"));
+      return true;
+    }
+    Intent fallback=searchScreen(app,query);
+    if(fallback!=null&&launcher.open(fallback)){
+      finish(id,"play_started","Opened "+appLabel(app)+" with a search for “"+query+"”. If a list appears, tap the song or video to start it.",json("player",appLabel(app),"query",query,"mode","search"));
+      return true;
+    }
+    return false;
+  }
+  private static String playHint(String app){
+    if(app.equals("spotify"))return " If nothing starts, open Spotify once and sign in, then ask again.";
+    if(app.equals("gaana")||app.equals("jiosaavn"))return " If nothing starts, open the app once and try again.";
+    return "";
+  }
+  /** Android's standard media-browse intent, pinned to one player. */
+  private Intent browseIntent(String app,String query){
+    Intent browse=new Intent(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
+      .putExtra(MediaStore.EXTRA_MEDIA_FOCUS,MediaStore.Audio.Media.ENTRY_CONTENT_TYPE)
+      .putExtra(MediaStore.EXTRA_MEDIA_TITLE,query)
+      .putExtra(SearchManager.QUERY,query);
+    String pkg=PLAYERS.get(app);
+    if(pkg!=null&&!pkg.isEmpty())browse.setPackage(pkg);
+    return browse.resolveActivity(activity.getPackageManager())==null?null:browse;
+  }
+  /** The player's own search screen, used only when it cannot start playback directly. */
+  private Intent searchScreen(String app,String query){
+    String encoded=Uri.encode(query);
+    if(app.equals("spotify"))return new Intent(Intent.ACTION_VIEW,Uri.parse("https://open.spotify.com/search/"+encoded)).setPackage(PLAYERS.get(app));
+    if(app.equals("youtube_music"))return new Intent(Intent.ACTION_VIEW,Uri.parse("https://music.youtube.com/search?q="+encoded)).setPackage(PLAYERS.get(app));
+    if(app.equals("youtube"))return new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.youtube.com/results").buildUpon().appendQueryParameter("search_query",query).build()).setPackage(PLAYERS.get(app));
+    if(app.equals("gaana"))return new Intent(Intent.ACTION_VIEW,Uri.parse("https://gaana.com/search/"+encoded)).setPackage(PLAYERS.get(app));
+    if(app.equals("jiosaavn"))return new Intent(Intent.ACTION_VIEW,Uri.parse("https://www.jiosaavn.com/search/"+encoded)).setPackage(PLAYERS.get(app));
+    return null;
+  }
+  private static String playerNames(){
+    StringBuilder names=new StringBuilder();
+    for(String key:PLAYER_ORDER){if(names.length()>0)names.append(", ");names.append(appLabelStatic(key));}
+    return names.toString();
+  }
+  private static String appLabelStatic(String app){
+    if(app.equals("youtube"))return "YouTube";
+    if(app.equals("youtube_music"))return "YouTube Music";
+    if(app.equals("spotify"))return "Spotify";
+    if(app.equals("prime_music"))return "Amazon Prime Music";
+    if(app.equals("gaana"))return "Gaana";
+    if(app.equals("jiosaavn"))return "JioSaavn";
+    return app;
   }
   private void openCamera(String id){
     boolean opened=launcher.open(new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA));
@@ -687,7 +778,7 @@ public final class MobileActions {
       data.put("device",Build.MANUFACTURER+" "+Build.MODEL);
       data.put("android",Build.VERSION.RELEASE);
       data.put("sdk",Build.VERSION.SDK_INT);
-      data.put("appVersion","1.3.0");
+      data.put("appVersion","1.5.0");
       StringBuilder summary=new StringBuilder();
       summary.append("Battery ").append(percent<0?"unknown":percent+"%").append(data.optBoolean("charging")?", charging":"").append(". ");
       summary.append("Network: ").append(network).append(". ");

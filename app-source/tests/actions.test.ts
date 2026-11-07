@@ -22,6 +22,25 @@ const cases: Case[] = [
   ['volume 40', { action: 'set_volume', level: 40 }],
   ['volume down', { action: 'set_volume', direction: 'down' }],
   ['next song', { action: 'media_control', command: 'next' }],
+  ['play Millionaire', { action: 'play_media', query: 'Millionaire' }],
+  ['play Millionaire on Spotify', { action: 'play_media', query: 'Millionaire', app: 'spotify' }],
+  ['play Triggered Insaan on YouTube', { action: 'play_media', query: 'Triggered Insaan', app: 'youtube' }],
+  ['play the song Kesariya in YouTube Music', { action: 'play_media', query: 'Kesariya', app: 'youtube_music' }],
+  ['Spotify e Millionaire chalao', { action: 'play_media', query: 'Millionaire', app: 'spotify' }],
+  ['Triggered Insaan er video chalao', { action: 'play_media', query: 'Triggered Insaan' }],
+  ['Arijit Singh er gaan chalao', { action: 'play_media', query: 'Arijit Singh' }],
+  ['মিলিওনেয়ার গানটা চালাও', { action: 'play_media', query: 'মিলিওনেয়ার' }],
+  ['Triggered Insaan এর ভিডিও চালাও', { action: 'play_media', query: 'Triggered Insaan' }],
+  ['play music', { action: 'media_control', command: 'play_pause' }],
+  ['play Triggered Insaan', { action: 'play_media', query: 'Triggered Insaan' }],
+  ['Triggered Insaan er new video chalao', { action: 'play_media', query: 'Triggered Insaan' }],
+  ['play Despacito in Gaana', { action: 'play_media', query: 'Despacito', app: 'gaana' }],
+  ['Spotify e Millionaire chalao', { action: 'play_media', query: 'Millionaire', app: 'spotify' }],
+  ['শুনতে চাই Arijit Singh', { action: 'play_media', query: 'Arijit Singh' }],
+  ['play on spotify', null],
+  ['play চালাও', null],
+  ['play', null],
+  ['torch chalao', null],
   ['open https://example.com/a?b=1', { action: 'open_url', url: 'https://example.com/a?b=1' }],
   ['call +919876543210', { action: 'call', recipient: '+919876543210' }],
   ['রাহুল কে কল করো', { action: 'call', recipient: 'রাহুল' }],
@@ -58,7 +77,7 @@ for (const prose of ['আজ আবহাওয়া কেমন?', 'how are y
 }
 
 const declared = MOBILE_TOOL.parameters.properties.action.enum as string[];
-const javaMirror = ['open_app', 'open_url', 'search_youtube', 'search_web', 'call', 'send_message', 'cancel_send',
+const javaMirror = ['open_app', 'open_url', 'play_media', 'search_youtube', 'search_web', 'call', 'send_message', 'cancel_send',
   'sim_info', 'set_flashlight', 'open_wifi_settings', 'open_settings_panel', 'set_alarm', 'set_timer', 'create_event',
   'navigate_to', 'share_text', 'copy_text', 'media_control', 'set_volume', 'device_status', 'list_apps', 'open_camera'];
 if (JSON.stringify(declared) !== JSON.stringify(javaMirror)) {

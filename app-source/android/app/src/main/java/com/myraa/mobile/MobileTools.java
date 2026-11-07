@@ -15,19 +15,19 @@ public final class MobileTools {
   public static JSONArray declarations() {
     JSONArray tools = new JSONArray();
     JSONObject action = function(ACTION,
-      "Work the user's Android phone through supported actions: open installed apps, open an https page, search YouTube or the web, place a phone call directly (choosing the SIM when the phone has several), send a message directly in WhatsApp, Telegram, Instagram, Messenger or SMS, reveal the phone's SIMs, toggle the flashlight, open Wi-Fi and system panels, set alarms and timers, open a calendar event editor, open Maps navigation, share text, copy to the clipboard, send media keys, change media volume, read device status, list installed apps, open the camera. Contacts are resolved locally on the device. Sending is always two steps: prepare, then confirm with confirm=true. Never invent success: report the returned status truthfully.",
+      "Work the user's Android phone through supported actions: open installed apps, open an https page, play a song, album, artist, video or channel directly in a music app (YouTube, YouTube Music, Spotify, Prime Music, Gaana or JioSaavn), search YouTube or the web, place a phone call directly (choosing the SIM when the phone has several), send a message directly in WhatsApp, Telegram, Instagram, Messenger or SMS, reveal the phone's SIMs, toggle the flashlight, open Wi-Fi and system panels, set alarms and timers, open a calendar event editor, open Maps navigation, share text, copy to the clipboard, send media keys, change media volume, read device status, list installed apps, open the camera. Contacts are resolved locally on the device. Sending is always two steps: prepare, then confirm with confirm=true. Never invent success: report the returned status truthfully.",
       json(
         "action", json("type", "STRING", "enum", new JSONArray()
-          .put("open_app").put("open_url").put("search_youtube").put("search_web")
+          .put("open_app").put("open_url").put("play_media").put("search_youtube").put("search_web")
           .put("call").put("send_message").put("cancel_send").put("sim_info")
           .put("set_flashlight").put("open_wifi_settings").put("open_settings_panel")
           .put("set_alarm").put("set_timer").put("create_event").put("navigate_to")
           .put("share_text").put("copy_text").put("media_control").put("set_volume")
           .put("device_status").put("list_apps").put("open_camera"),
           "description", "Which Android action to perform."),
-        "app", json("type", "STRING", "description", "For send_message: whatsapp, telegram, instagram, messenger or sms. For open_app: the app name as shown on the home screen, such as YouTube, Chrome, Calculator."),
+        "app", json("type", "STRING", "description", "For send_message: whatsapp, telegram, instagram, messenger or sms. For open_app: the app name as shown on the home screen, such as YouTube, Chrome, Calculator. For play_media: youtube, youtube_music, spotify, prime_music, gaana or jiosaavn only when the user named a player; omit it otherwise."),
         "url", json("type", "STRING", "description", "A complete https:// page address explicitly given or implied by the user. Only for open_url."),
-        "query", json("type", "STRING", "description", "The exact search text the user asked for. Required for search_youtube and search_web."),
+        "query", json("type", "STRING", "description", "The exact text the user said: the song, album, artist, video or channel for play_media, or the search text for search_youtube and search_web. Required for those actions."),
         "recipient", json("type", "STRING", "description", "Whom to call or message: a saved contact name exactly as the user said it, a full phone number with country code, or the exact @username for Telegram, Instagram or Messenger. Contacts are resolved locally on the device. Used by call and send_message."),
         "sim", json("type", "STRING", "description", "Which SIM to use, \"1\" or \"2\", taken from the user's answer or from sim_info. Only send it after the user chose. Used by call and by send_message with app sms."),
         "confirm", json("type", "BOOLEAN", "description", "false or omitted prepares the message and reports what would be sent; true actually presses Send. Only for send_message, and only after the user said send."),
@@ -76,6 +76,8 @@ public final class MobileTools {
     prompt.append("Use the mobile_action tool for device tasks instead of describing the steps. Say one short sentence about what you are about to do, then call the tool, then report the actual result. ");
     prompt.append("You may chain several actions when the user asks for several things. Never invent an action result, a permission grant, a sent message or a placed call. ");
     prompt.append("If a tool reports invalid, not_found, permission_required or unavailable, explain the exact reason and what the user must tap or allow. ");
+    prompt.append("\n## Music and video\n");
+    prompt.append("When the user names a song, artist, album, video or channel and wants it played, use play_media with the exact words they said as query, and set app only when they named a player (youtube, youtube_music, spotify, prime_music, gaana, jiosaavn). Never ask which app first; Android picks the best installed player. It plays from the user's own account in that app, so do not claim a specific track started: report exactly what the result status says. If the status is not_installed, say that app is missing and offer to play it in another installed player.\n");
     prompt.append("\n## Calls and messages you perform yourself\n");
     prompt.append("For a call use action call with recipient (name or number) and, when you already know it, sim. The app places the call itself, it does not just open the dialer. ");
     prompt.append("If the result status is needs_sim, ask exactly one short question naming the SIMs from data.sims (for example \"SIM 1 Airtel, SIM 2 Jio — which one?\"), then call call again with sim set to the user's answer. Never guess a SIM and never claim the call connected: call_started only means Android began dialling. ");

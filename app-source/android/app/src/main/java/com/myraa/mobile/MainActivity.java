@@ -217,7 +217,7 @@ public class MainActivity extends Activity {
     JSONObject value = json("model", prefs.getString("model", "gemini-3.5-flash"), "quality", prefs.getString("quality", "low"),
       "language", prefs.getString("language", "bn-IN"), "spokenReplies", prefs.getBoolean("spokenReplies", false),
       "keyConfigured", prefs.contains("keyCipher"), "keyVerified", prefs.getLong("keyVerifiedAt", 0) > 0 && prefs.getString("verifiedModel", "").equals(prefs.getString("model", "gemini-3.5-flash")),
-      "providerErrorCode", prefs.getString("providerErrorCode", ""), "ttsAvailable", ttsReady, "version", "1.4.0",
+      "providerErrorCode", prefs.getString("providerErrorCode", ""), "ttsAvailable", ttsReady, "version", "1.5.0",
       "textScale", prefs.getInt("textScale", 100), "pendingTasks", AiTaskStore.get(this).pendingCount(),
       "floatingControlsAllowed", Settings.canDrawOverlays(this), "liveModel", prefs.getString("liveModel", "gemini-3.1-flash-live-preview"),
       "permissions", permissions, "memory", memoryArray());

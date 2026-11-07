@@ -1,6 +1,7 @@
 export type MobileAction =
   | { action: 'open_app'; app: string }
   | { action: 'open_url'; url: string }
+  | { action: 'play_media'; app?: string; query: string }
   | { action: 'search_youtube' | 'search_web'; query: string }
   | { action: 'call'; recipient: string; sim?: string }
   | { action: 'send_message'; app: 'whatsapp' | 'telegram' | 'instagram' | 'messenger' | 'sms' | string; recipient: string; text: string; sim?: string; confirm?: boolean }
@@ -17,7 +18,7 @@ export type MobileAction =
   | { action: 'device_status' }
   | { action: 'open_camera' };
 
-const ACTION_ENUM = ['open_app', 'open_url', 'search_youtube', 'search_web', 'call', 'send_message',
+const ACTION_ENUM = ['open_app', 'open_url', 'play_media', 'search_youtube', 'search_web', 'call', 'send_message',
   'cancel_send', 'sim_info', 'set_flashlight', 'open_wifi_settings', 'open_settings_panel', 'set_alarm',
   'set_timer', 'create_event', 'navigate_to', 'share_text', 'copy_text', 'media_control', 'set_volume',
   'device_status', 'list_apps', 'open_camera'];
@@ -25,12 +26,12 @@ const ACTION_ENUM = ['open_app', 'open_url', 'search_youtube', 'search_web', 'ca
 /** Mirrors MobileTools.java so text chat and Live voice share one Android capability set. */
 export const MOBILE_TOOL = {
   name: 'mobile_action',
-  description: 'Work the user\'s Android phone through supported actions: open installed apps, open an https page, search YouTube or the web, place a phone call directly (choosing the SIM when the phone has several), send a message directly in WhatsApp, Telegram, Instagram, Messenger or SMS, reveal the phone\'s SIMs, toggle the flashlight, open Wi-Fi and system panels, set alarms and timers, open a calendar event editor, open Maps navigation, share text, copy to the clipboard, send media keys, change media volume, read device status, list installed apps, open the camera. Contacts are resolved locally on the device. Sending is always two steps: prepare, then confirm with confirm=true. Never invent success: report the returned status truthfully.',
+  description: 'Work the user\'s Android phone through supported actions: open installed apps, open an https page, play a song, album, artist, video or channel directly in a music app (YouTube, YouTube Music, Spotify, Prime Music, Gaana, JioSaavn), search YouTube or the web, place a phone call directly (choosing the SIM when the phone has several), send a message directly in WhatsApp, Telegram, Instagram, Messenger or SMS, reveal the phone\'s SIMs, toggle the flashlight, open Wi-Fi and system panels, set alarms and timers, open a calendar event editor, open Maps navigation, share text, copy to the clipboard, send media keys, change media volume, read device status, list installed apps, open the camera. Contacts are resolved locally on the device. Sending is always two steps: prepare, then confirm with confirm=true. Never invent success: report the returned status truthfully.',
   parameters: { type: 'OBJECT', properties: {
     action: { type: 'STRING', enum: ACTION_ENUM, description: 'Which Android action to perform.' },
-    app: { type: 'STRING', description: 'For send_message: whatsapp, telegram, instagram, messenger or sms. For open_app: the app name as shown on the home screen, such as YouTube, Chrome, Calculator.' },
+    app: { type: 'STRING', description: 'For send_message: whatsapp, telegram, instagram, messenger or sms. For open_app: the app name as shown on the home screen, such as YouTube, Chrome, Calculator. For play_media: youtube, youtube_music, spotify, prime_music, gaana or jiosaavn when the user named a player; omit it otherwise so Android picks the best installed one.' },
     url: { type: 'STRING', description: 'A complete https:// page address explicitly given or implied by the user. Only for open_url.' },
-    query: { type: 'STRING', description: 'The exact search text the user asked for. Required for search_youtube and search_web.' },
+    query: { type: 'STRING', description: 'For play_media: the song, album, artist, video or channel exactly as the user said it, for example “Millionaire” or “Triggered Insaan”. For search_youtube and search_web: the exact search text asked for.' },
     recipient: { type: 'STRING', description: 'Whom to call or message: a saved contact name exactly as the user said it, a full phone number with country code, or the exact @username for Telegram, Instagram or Messenger. Contacts are resolved locally on the device. Used by call and send_message.' },
     sim: { type: 'STRING', description: 'Which SIM to use, "1" or "2", taken from the user\'s answer or from sim_info. Only send it after the user chose. Used by call and by send_message with app sms.' },
     confirm: { type: 'BOOLEAN', description: 'false or omitted prepares the message and reports what would be sent; true actually presses Send. Only for send_message, and only after the user said send.' },
@@ -62,6 +63,72 @@ export const REMEMBER_TOOL = {
 };
 
 export const LIVE_TOOLS = [MOBILE_TOOL, REMEMBER_TOOL];
+
+/** Which music app the user named, if any. */
+const PLAY_APPS: Record<string, string> = {
+  'youtube music': 'youtube_music', 'yt music': 'youtube_music',
+  'youtube': 'youtube', 'you tube': 'youtube',
+  'spotify': 'spotify', 'স্পটিফাই': 'spotify', 'स्पॉटिफ़ाई': 'spotify',
+  'prime music': 'prime_music', 'amazon prime music': 'prime_music', 'amazon music': 'prime_music',
+  'gaana': 'gaana', 'গানা': 'gaana', 'गाना': 'gaana',
+  'jiosaavn': 'jiosaavn', 'jio saavn': 'jiosaavn', 'saavn': 'jiosaavn',
+};
+const APP_NAMES = Object.keys(PLAY_APPS).sort((a, b) => b.length - a.length).map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+const PLAY_VERBS_ONLY = /^(?:play|chalao|chala\s*do|bajao|play\s*koro|চালাও|বাজাও|শোনাও|দেখাও|চালিয়ে\s*দাও|চালু\s*করো)$/iu;
+const NOT_MEDIA = /^(?:on|in|from|via|for|a|an|the|some|my|me|গান|ভিডিও|সঙ্গীত|মিউজিক|music|song|songs|video|something|anything|it|that|this|এটা|ওটা|চালাও|বাজাও|শোনাও|দেখাও|chalao|bajao|play\s*koro)$/iu;
+const DEVICE_THING = /(flashlight|torch|ফ্ল্যাশ\s*লাইট|ফ্ল্যাশলাইট|টর্চ|wifi|wi-?fi|ওয়াই.?ফাই|bluetooth|ব্লুটুথ|camera|ক্যামেরা|settings|সেটিংস|alarm|অ্যালার্ম|আলার্ম|timer|টাইমার|volume|ভলিউম|airplane|ডাটা)/iu;
+const MEDIA_NOUN = /(?:\s*(?:-?(?:এর|ের)|er))?\s*(?:গান|ভিডিও|সঙ্গীত|video|song|music|gaan)?\s*(?:টি|টা|ta|ti)?$/iu;
+const PLAY_VERB = /^(.*?)\s*(?:টি|টা)?\s*(?:চালাও|চালিয়ে\s*দাও|চালু\s*করো|বাজাও|শোনাও|দেখাও|শুনতে\s*চাই|দেখতে\s*চাই|play\s*koro|play\s*kar(?:o|do)?|chalao|chala\s*do|bajao|baja\s*do)$/iu;
+
+function usablePlayQuery(value: string): string {
+  let query = value.trim();
+  if (PLAY_VERBS_ONLY.test(query)) return '';
+  for (let pass = 0; pass < 6; pass++) {
+    const before = query;
+    for (const pattern of [MEDIA_NOUN, /^(?:the\s+)?(?:song|track|video|music|গান|ভিডিও|সঙ্গীত)\s+/iu,
+      /\s+(?:-?(?:এর|ের)|er|ke)\s+(?:new|latest|নতুন|old|best)?\s*$/iu, /\s+(?:new|latest|নতুন)$/iu]) {
+      query = query.replace(pattern, '').trim();
+    }
+    if (query === before) break;
+  }
+  return NOT_MEDIA.test(query) || DEVICE_THING.test(query) ? '' : query;
+}
+
+/** “play Millionaire on Spotify”, “Triggered Insaan er video chalao”, “Spotify e Millionaire chalao”… */
+export function parsePlayMedia(input: string): MobileAction | null {
+  const text = input.trim().replace(/[.!?।]+$/u, '').trim();
+  const english = /^(?:please\s+)?(?:play|stream)\s+(.+)$/i.exec(text);
+  if (english) {
+    let rest = english[1].trim();
+    let app: string | undefined;
+    const named = new RegExp(`^(?:the\\s+)?(?:song|track|video|music|channel|album|playlist)?\\s*["“']?(.+?)["”']?(?:\\s+(?:on|in|from|via)\\s+(${APP_NAMES}))?$`, 'iu').exec(rest);
+    if (named) {
+      rest = named[1].trim();
+      if (named[2]) app = PLAY_APPS[named[2].trim().toLowerCase()];
+    }
+    const query = usablePlayQuery(rest);
+    if (query && !/^(?:on|in|from|via)\s/iu.test(query)) return { action: 'play_media', query, ...(app ? { app } : {}) };
+  }
+  const wish = /^(?:আমি\s+)?(?:শুনতে|দেখতে)\s*চাই\s+(.+)$/u.exec(text);
+  if (wish) {
+    const query = usablePlayQuery(wish[1]);
+    if (query) return { action: 'play_media', query };
+  }
+  const verb = PLAY_VERB.exec(text);
+  if (verb) {
+    let rest = verb[1].trim();
+    let app: string | undefined;
+    const tail = new RegExp(`^(.*?)\\s+(?:on|in|from)\\s+(${APP_NAMES})$`, 'iu').exec(rest);
+    if (tail) { rest = tail[1].trim(); app = PLAY_APPS[tail[2].trim().toLowerCase()]; }
+    const prefix = new RegExp(`^(${APP_NAMES})\\s*(?:-?এ|ে|তে|te|e|on|in)?\\s+(.+)$`, 'iu').exec(rest);
+    if (prefix) { rest = prefix[2].trim(); app = PLAY_APPS[prefix[1].trim().toLowerCase()]; }
+    const around = new RegExp(`^(.+?)\\s+(?:(${APP_NAMES})\\s*(?:-?এ|ে|তে|te|e|on|in))$`, 'iu').exec(rest);
+    if (around) { rest = around[1].trim(); app = PLAY_APPS[around[2].trim().toLowerCase()]; }
+    const query = usablePlayQuery(rest);
+    if (query) return { action: 'play_media', query, ...(app ? { app } : {}) };
+  }
+  return null;
+}
 
 /** Exact local typed commands; Live voice and text chat use structured Gemini function calls. */
 export function parseMobileAction(input: string): MobileAction | null {
@@ -101,6 +168,8 @@ export function parseMobileAction(input: string): MobileAction | null {
   if (/^(?:open|launch)\s+(?:the\s+)?camera$/i.test(text) || /^ক্যামেরা\s*(?:খোলো|চালু করো)$/u.test(text)) return { action: 'open_camera' };
   const link = /^(?:open|visit|go to)\s+(https?:\/\/\S{3,})$/i.exec(text);
   if (link) return { action: 'open_url', url: link[1] };
+  const played = parsePlayMedia(text);
+  if (played) return played;
   let match = /^(?:open\s+)?(?:youtube|you tube)(?:\s+and)?\s+search(?:\s+for)?\s+(.+)$/i.exec(text) || /^search(?:\s+for)?\s+(.+?)\s+on\s+youtube$/i.exec(text);
   if (match) return { action: 'search_youtube', query: match[1].trim() };
   match = /^(?:open\s+)?(?:chrome|google chrome|browser)(?:\s+and)?\s+search(?:\s+for)?\s+(.+)$/i.exec(text) || /^search(?:\s+for)?\s+(.+?)\s+(?:on|in)\s+(?:chrome|google|browser)$/i.exec(text);
@@ -119,6 +188,7 @@ export function describeAction(action: string, args: Record<string, unknown>): s
   switch (action) {
     case 'open_app': return `Opening ${first('app')}`;
     case 'open_url': return 'Opening link';
+    case 'play_media': return `Playing “${first('query')}”${first('app') ? ` on ${first('app').replace('_', ' ')}` : ''}`;
     case 'search_youtube': return `Searching YouTube for “${first('query')}”`;
     case 'search_web': return `Searching the web for “${first('query')}”`;
     case 'call': return `Calling ${first('recipient')}${first('sim') ? ` on SIM ${first('sim')}` : ''}`;
