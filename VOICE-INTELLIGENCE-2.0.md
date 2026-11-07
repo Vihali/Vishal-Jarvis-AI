@@ -35,15 +35,24 @@ Version stays **1.5.1** / `versionCode` 11. UI, colors, layout, 3D character, na
 | Check | Result |
 | --- | --- |
 | `npm run check` in `app-source/` (tsc + actions tests + Vite mobile assets) | **passed** (72 parser cases, background contracts, Vite mobile build) |
-| GitHub Actions `Vishal Jarvis Android Build` (`app-source/**`) including `:app:testDebugUnitTest` | after push; APK link added when green |
+| GitHub Actions `Vishal Jarvis Android Build` run [42376599370](https://github.com/Vihali/Vishal-Jarvis-AI/actions/runs/42376599370) | **success**: typecheck, Gradle `:app:testDebugUnitTest` + APK, all four emulator instrumentation suites |
 | Device: traffic/horns/crowds/wind, Gemini Live freeze, real address book | **not run** — no phone in this environment |
-| Placing a real `ACTION_CALL` | **not run** |
+| Placing a real `ACTION_CALL` on a physical SIM | **not run** on a personal phone; emulator **did** assert `ACTION_CALL` for numbers, saved contacts, and ambiguous chooser |
 
 JUnit `NameMatcherTest` covers Labanya variants, ambiguous names, unmatched names, aliases, and enhancer frame length. It does not prove a physical microphone or SIM call.
 
+## Verified APK (1.5.1 + Voice Intelligence 2.0)
+
+- Workflow run: https://github.com/Vihali/Vishal-Jarvis-AI/actions/runs/42376599370
+- APK artifact: https://github.com/Vihali/Vishal-Jarvis-AI/actions/runs/42376599370/artifacts/13575768750
+- Source zip artifact: https://github.com/Vihali/Vishal-Jarvis-AI/actions/runs/42376599370/artifacts/13576175943
+- Pull request: https://github.com/Vihali/Vishal-Jarvis-AI/pull/2
+
+This is the 1.5.1 app (`versionName` 1.5.1, `versionCode` 11) with Voice Intelligence 2.0. It is a **debug/testing** APK unless you published a signed release from the workflow.
+
 ## How to verify on a phone
 
-1. Install the 1.5.1 Actions APK (debug unless the workflow published a signed build).
+1. Download **Vishal-Jarvis-APK** from the run above and install it (debug unless the workflow published a signed build).
 2. Grant Contacts, Microphone, Phone, Notifications.
 3. Save `লাবণ্য` and say the four example phrases. Confirm it does **not** call a different person.
 4. Save two similar names and confirm a chooser, never a silent wrong call.
