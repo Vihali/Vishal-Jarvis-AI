@@ -148,6 +148,9 @@ public class AuthInstrumentation extends Instrumentation {
       js("window.__liveSocket.onmessage({data:JSON.stringify({serverContent:{modelTurn:{parts:[{inlineData:{mimeType:'audio/pcm;rate=24000',data:btoa(String.fromCharCode(...new Uint8Array(48000)))}}]}}})});true");
       waitTrue("document.getElementById('presence').textContent==='Speaking with you'");
       require(true,"Android WebAudio plays Gemini native PCM without platform TTS");
+      js("window.__liveSocket.onmessage({data:JSON.stringify({serverContent:{turnComplete:true}})});true");
+      waitTrue("document.getElementById('presence').textContent==='Live \u00b7 listening to you'");
+      require(true,"playback state returns to listening only after turnComplete and full audio drain");
       Class<?> serviceClass=activity.getClassLoader().loadClass("com.myraa.mobile.LiveVoiceService");
       require(serviceClass.getField("running").getBoolean(null),"explicit Live call has an ongoing microphone foreground service");
       int pcmBefore=Integer.parseInt(js("window.__livePcm"));

@@ -754,7 +754,7 @@ public class MainActivity extends Activity {
   @Override protected void onPause() {
     foreground=false;AiTaskEvents.visible=false;super.onPause();boolean keep=allowBackgroundLive;
     if(web!=null){web.evaluateJavascript("window.dispatchEvent(new CustomEvent('myraa:lifecycle',{detail:{active:false,backgroundLive:"+keep+",permissionPrompt:"+(pendingLiveId!=null)+"}}))",null);if(!keep)web.onPause();}
-    if(pendingLiveId==null&&!keep)cancelLive();if(tts!=null)tts.stop();
+    if(pendingLiveId==null&&!keep)cancelLive();/* TTS intentionally not stopped on pause: read-aloud must finish in background; stopSpeech()/onDestroy still stop it. */
   }
   @Override protected void onResume() {
     foreground=true;AiTaskEvents.visible=true;super.onResume();AiTaskCoordinator.recover(this);if(pendingUiAction!=null){Runnable action=pendingUiAction;pendingUiAction=null;action.run();}if(pendingLiveId!=null&&checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)provisionLive(pendingLiveId);

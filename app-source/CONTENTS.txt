@@ -101,5 +101,6 @@ src/mobile/mobile.css
 src/mobile/voiceEnhance.ts
 tests/actions.test.ts
 tests/background.test.ts
+tests/playback.test.ts
 tsconfig.json
 vite.mobile.config.ts
