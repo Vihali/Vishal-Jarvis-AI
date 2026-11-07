@@ -83,3 +83,19 @@ they exercise (context self-resume, drain-before-close, ordered
 `receiveChain` re-delivery, background TTS) are covered by the static
 source guards in the same test file. Do not mark those four as
 device-verified until they are run on hardware.
+
+## Second pass (after emulator + device re-test)
+
+9. **Local VAD killed playback after ~80 ms of echo.** Native frames are
+   20 ms, so the old 4-loud-frame barge-in rule fired on a short echo burst
+   and called the interruption path locally — even with forwarding fixed.
+   Barge-in during playback now needs the native enhancer's speech verdict
+   **and** 350 ms of sustained loud input; nothing is forwarded meanwhile.
+10. **Hardware AEC never engaged on many devices.**
+    `AudioCaptureEngine` never set `MODE_IN_COMMUNICATION`; it now does for
+    the Live call and restores the previous mode on stop, so the loudspeaker
+    reference is actually cancelled at the microphone.
+11. The emulator suite caught #9's contract change: AuthInstrumentation now
+    also proves the fixed behaviour — after fake PCM + `turnComplete`, the
+    UI returns to "listening" only once the scheduled audio has drained,
+    and microphone streaming then continues while another app is foreground.

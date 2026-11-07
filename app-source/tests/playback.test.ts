@@ -88,7 +88,12 @@ assert.doesNotMatch(audio, /activeSources/, 'legacy per-chunk source list must s
 assert.match(audio, /onstatechange/, 'output context suspension must self-recover');
 assert.match(audio, /deferredDisconnect/, 'session close must drain queued speech first');
 assert.match(audio, /preContextChunks/, 'chunks arriving before the graph exists must be preserved');
+assert.match(audio, /bargeInSustainMs = 350/, 'echo bursts must not interrupt playback; barge-in must be sustained');
+assert.match(audio, /usingNativeCapture && !this\.nativeSpeechHint/, 'native echo without a speech verdict must never interrupt or be forwarded');
 assert.match(transport, /receiveChain/, 'Live messages must stay in arrival order');
 assert.doesNotMatch(ui, /document\.hidden\) \{[^}]*stopSpeech/, 'minimising must not stop TTS');
 assert.doesNotMatch(activity, /if\(pendingLiveId==null&&!keep\)cancelLive\(\);if\(tts!=null\)tts\.stop\(\);/, 'onPause must not stop TTS');
+const capture = readFileSync('android/app/src/main/java/com/myraa/mobile/AudioCaptureEngine.java', 'utf8');
+assert.match(capture, /MODE_IN_COMMUNICATION/, 'hardware echo cancellation requires communication mode during Live capture');
+assert.match(capture, /setMode\(previousMode\)/, 'previous audio mode must be restored after capture');
 console.log('Playback regression tests passed: no premature termination, ordered gapless chunks, turn-aware completion.');

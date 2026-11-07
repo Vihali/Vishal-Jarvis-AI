@@ -36,6 +36,8 @@ public final class AudioCaptureEngine {
   private boolean hardwareAec;
   private boolean hardwareAgc;
   private int sessionId = AudioManager.AUDIO_SESSION_ID_GENERATE;
+  private int previousMode = AudioManager.MODE_NORMAL;
+  private boolean modeChanged;
   private int sourceUsed = MediaRecorder.AudioSource.VOICE_COMMUNICATION;
   private int actualRate = SpeechEnhancer.SAMPLE_RATE;
   private volatile JSONObject lastDiagnostics = new JSONObject();
@@ -52,6 +54,15 @@ public final class AudioCaptureEngine {
   public synchronized boolean start() {
     if (running.get()) return true;
     audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+    if (audioManager != null) {
+      // Without communication mode many devices never engage the hardware
+      // echo canceller, so the model's own loudspeaker output re-enters the
+      // microphone and aborts its response. Engage it for the call and
+      // restore the previous mode afterwards.
+      previousMode = audioManager.getMode();
+      try { audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION); modeChanged = true; }
+      catch (RuntimeException ignored) { modeChanged = false; }
+    }
     try {
       if (audioManager != null) {
         focusListener = new AudioManager.OnAudioFocusChangeListener() {
@@ -122,6 +133,10 @@ public final class AudioCaptureEngine {
     }
     if (audioManager != null && focusListener != null) {
       try { audioManager.abandonAudioFocus(focusListener); } catch (RuntimeException ignored) {}
+    }
+    if (audioManager != null && modeChanged) {
+      try { audioManager.setMode(previousMode); } catch (RuntimeException ignored) {}
+      modeChanged = false;
     }
     focusListener = null;
   }

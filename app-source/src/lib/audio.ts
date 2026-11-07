@@ -340,6 +340,9 @@ export class MyraaAudioSession {
   private readonly bargeInGuardMs = 700;
   private readonly bargeInStartFrames = 4;
   private readonly bargeInVoiceThreshold = 0.045;
+  private readonly bargeInSustainMs = 350;
+  private bargeInSince = 0;
+  private nativeSpeechHint = false;
   
   // State Callbacks
   private onStateChange: (state: LiveState) => void;
@@ -407,6 +410,7 @@ export class MyraaAudioSession {
     if (!bytes.length) return;
     this.lastNativeAt = Date.now();
     const floats = pcm16ToFloats(bytes);
+    this.nativeSpeechHint = speechHint;
     // Respect the VAD decision. Previously every native frame was forwarded
     // unconditionally, so the model's own loudspeaker output reached Gemini,
     // whose server VAD (START_OF_ACTIVITY_INTERRUPTS) aborted generation
@@ -800,6 +804,7 @@ export class MyraaAudioSession {
   private handleInterruption() {
     console.log("[Audio] Interruption signal received; flushing playback queue.");
     this.player?.interrupt();
+    this.bargeInSince = 0;
     this.preContextChunks = [];
     this.deferredDisconnect = false;
     // Pitch-shifter state belongs to the interrupted turn; rebuild it so the
@@ -845,19 +850,34 @@ export class MyraaAudioSession {
     if (rms >= threshold) {
       this.lastVoiceAt = timestamp;
       this.voiceFrames += 1;
-      if (!this.userSpeaking && this.voiceFrames >= requiredFrames) {
-        const interruptedMyraa = myraaOutputActive;
-        this.userSpeaking = true;
-        if (interruptedMyraa) {
-          this.emitConversationEvent("user_interrupted_myraa", rms);
-          this.handleInterruption();
+      if (myraaOutputActive && !this.userSpeaking) {
+        // Playback is active: a few loud frames are almost certainly speaker
+        // echo, not a human. Native frames arrive every 20 ms, so the old
+        // 4-frame rule fired after ~80 ms of echo and killed the response
+        // locally. Require the native enhancer's own speech verdict AND a
+        // sustained 350 ms of loud, speech-like input before interrupting,
+        // and forward nothing to Gemini while the candidate is unproven.
+        if (this.usingNativeCapture && !this.nativeSpeechHint) {
+          this.bargeInSince = 0;
+          return false;
         }
+        if (this.bargeInSince === 0) this.bargeInSince = timestamp;
+        if (timestamp - this.bargeInSince < this.bargeInSustainMs) return false;
+        this.userSpeaking = true;
+        this.emitConversationEvent("user_interrupted_myraa", rms);
+        this.handleInterruption();
+        this.emitConversationEvent("user_started_speaking", rms);
+        return true;
+      }
+      if (!this.userSpeaking && this.voiceFrames >= requiredFrames) {
+        this.userSpeaking = true;
         this.emitConversationEvent("user_started_speaking", rms);
       }
       return !myraaOutputActive || this.userSpeaking;
     }
 
     this.voiceFrames = 0;
+    this.bargeInSince = 0;
     if (this.userSpeaking && timestamp - this.lastVoiceAt >= this.voiceStopDelayMs) {
       this.userSpeaking = false;
       this.emitConversationEvent("user_stopped_speaking", rms);
