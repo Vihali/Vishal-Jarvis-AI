@@ -1,0 +1,32 @@
+name: Publish verified APK once
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Vishal-Jarvis-debug-APK
+          run-id: 42332882608
+          github-token: ${{ github.token }}
+          path: apk
+      - name: Publish the emulator-tested APK to session branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          file=apk/Vishal-Jarvis-1.1.0-private.apk
+          sha256sum "$file"
+          sha=$(gh api "repos/$GH_REPO/contents/artifacts/Vishal-Jarvis-debug.apk?ref=arena/508d8e6b-vishal-jarvis-ai" --jq .sha)
+          python3 - "$file" "$sha" <<'PY'
+          import base64, json, sys
+          with open(sys.argv[1], 'rb') as f:
+              data = base64.b64encode(f.read()).decode()
+          with open('/tmp/apk-payload.json', 'w') as f:
+              json.dump({'message': 'Publish emulator-tested debug APK', 'branch': 'arena/508d8e6b-vishal-jarvis-ai', 'sha': sys.argv[2], 'content': data}, f)
+          PY
+          gh api --method PUT "repos/$GH_REPO/contents/artifacts/Vishal-Jarvis-debug.apk" --input /tmp/apk-payload.json --jq .content.sha
