@@ -3,13 +3,18 @@ name: Vishal Jarvis Android Build
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_apk:
+        description: 'Publish the debug APK to this session branch'
+        type: boolean
+        default: false
   push:
     paths:
       - 'Vishal-Jarvis-Android-App-Source.zip'
       - '.github/workflows/android-build.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -120,3 +125,19 @@ jobs:
           name: Vishal-Jarvis-APK
           path: ${{ runner.temp }}/Vishal-Jarvis-Android-App-Source/artifacts/android/Vishal-Jarvis-1.1.0-private.apk
           if-no-files-found: error
+
+      - name: Publish requested debug APK to session branch
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_apk && github.ref_name == 'arena/508d8e6b-vishal-jarvis-ai'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $apk = Join-Path $env:SOURCE_DIR "artifacts/android/Vishal-Jarvis-1.1.0-private.apk"
+          $path = "artifacts/Vishal-Jarvis-debug.apk"
+          $body = @{ message = "Publish requested debug APK"; content = [Convert]::ToBase64String([IO.File]::ReadAllBytes($apk)); branch = "arena/508d8e6b-vishal-jarvis-ai" }
+          $existing = gh api "repos/${{ github.repository }}/contents/$($path)?ref=arena/508d8e6b-vishal-jarvis-ai" 2>$null
+          if ($LASTEXITCODE -eq 0) { $body.sha = ($existing | ConvertFrom-Json).sha }
+          $json = Join-Path $env:RUNNER_TEMP "apk-upload.json"
+          [IO.File]::WriteAllText($json, ($body | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+          gh api --method PUT "repos/${{ github.repository }}/contents/$path" --input $json
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish APK to the session branch." }
