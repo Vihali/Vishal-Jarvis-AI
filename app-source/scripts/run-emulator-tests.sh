@@ -76,7 +76,13 @@ install_apk() {
   grep -qi 'Success' "$WORKER" || say "$(cat "$WORKER")"
 }
 
-install_apk "$apks/Vishal-Jarvis-1.4.0-debug.apk" 'the application APK'
+# The staged APK name carries the app version; never hard-code it here again.
+app_apk=$(find "$apks" -maxdepth 1 -name 'Vishal-Jarvis-*-debug.apk' | sort | head -n 1)
+if [[ -z $app_apk ]]; then
+  annotate 'Application APK missing from the downloaded artifact' /dev/null
+  exit 1
+fi
+install_apk "$app_apk" 'the application APK'
 install_apk "$apks/Vishal-Jarvis-tests.apk" 'the instrumentation APK'
 
 # Grant only permissions needed by the fixture tests. CALL_PHONE is intercepted
