@@ -97,6 +97,13 @@ public class BackgroundInstrumentation extends Instrumentation {
     Field field=activity.getClass().getDeclaredField("web"); field.setAccessible(true); web=(WebView)field.get(activity);
     until(()->{try{return "true".equals(js("!!window.MyraaNative&&!!window.MyraaEvents"));}catch(Exception e){return false;}},"app UI",45);
   }
+  /** Android's JSON writer escapes '/' as '\/', so assertions read parsed text. */
+  private String historyText() throws Exception {
+    JSONArray history=new JSONArray(target.getSharedPreferences("myraa.mobile.v1",0).getString("history","[]"));
+    StringBuilder text=new StringBuilder();
+    for(int i=0;i<history.length();i++){ JSONObject turn=history.optJSONObject(i); if(turn!=null) text.append(turn.optString("text","")).append('\n'); }
+    return text.toString();
+  }
   private int countHistory(String id) throws Exception {
     JSONArray history=new JSONArray(target.getSharedPreferences("myraa.mobile.v1",0).getString("history","[]")); int count=0;
     for(int i=0;i<history.length();i++)if(id.equals(history.getJSONObject(i).optString("taskId")))count++; return count;
@@ -171,7 +178,7 @@ public class BackgroundInstrumentation extends Instrumentation {
       String research=UUID.randomUUID().toString(); Object researchTask=enqueue(research,"Research the latest weather today");
       force(researchTask); until(()->"completed".equals(status(research)),"grounded research",45);
       check(new JSONObject(lastBody).getJSONArray("tools").getJSONObject(0).has("google_search"),"time-sensitive research requests use Gemini Google Search grounding");
-      check(target.getSharedPreferences("myraa.mobile.v1",0).getString("history","").contains("https://example.com/source"),"grounded source link is saved with the answer");
+      check(historyText().contains("https://example.com/source"),"grounded source link is saved with the answer");
 
       phase("interrupted phone action recovery");
       String recovery=UUID.randomUUID().toString(); Object recoveryTask=enqueue(recovery,"Check a previous phone task");
@@ -181,7 +188,7 @@ public class BackgroundInstrumentation extends Instrumentation {
       invoke(store,"requeue",new Class[]{String.class,String.class},recovery,"interrupted");
       force(recoveryTask); until(()->"completed".equals(status(recovery)),"safe tool recovery",45);
       check(!new JSONObject(lastBody).has("tools"),"interrupted phone actions are never automatically replayed");
-      check(target.getSharedPreferences("myraa.mobile.v1",0).getString("history","").contains("did not repeat it"),"recovered answer warns that a previous phone action may have started");
+      check(historyText().contains("did not repeat it"),"recovered answer warns that a previous phone action may have started");
 
       phase("transcript export and sharing");
       Class<?> exporter=loader.loadClass("com.myraa.mobile.TranscriptExport");
