@@ -173,6 +173,8 @@ public final class MobileActions {
     completed.put(id,value);while(completed.size()>64)completed.remove(completed.keySet().iterator().next());result.complete(id,value);
   }
   private boolean granted(String permission){return permissionsGranted||activity.checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED;}
+  /** Real OS grants only: SIM and call-account data cannot be faked by a test seam. */
+  private boolean hasPermission(String permission){return activity.checkSelfPermission(permission)==PackageManager.PERMISSION_GRANTED;}
   private void requestCallPermission(String id,Runnable retry){
     if(pending!=null||pendingTorchId!=null){finish(id,"busy","Finish the current permission request first.");return;}
     pendingId=id;pending=retry;pendingPhonePermission=Manifest.permission.CALL_PHONE;
@@ -286,7 +288,7 @@ public final class MobileActions {
 
   private List<PhoneAccountHandle> callAccounts(){
     List<PhoneAccountHandle> accounts=new ArrayList<>();
-    if(!granted(Manifest.permission.READ_PHONE_STATE))return accounts;
+    if(!hasPermission(Manifest.permission.READ_PHONE_STATE))return accounts;
     try{
       TelecomManager telecom=(TelecomManager)activity.getSystemService(Context.TELECOM_SERVICE);
       if(telecom==null)return accounts;
@@ -324,7 +326,7 @@ public final class MobileActions {
   }
 
   private void simInfo(String id){
-    if(!granted(Manifest.permission.READ_PHONE_STATE)){
+    if(!hasPermission(Manifest.permission.READ_PHONE_STATE)){
       finish(id,"unavailable","SIM details are unavailable without phone-state access. No SIM access request was made.");return;
     }
     List<PhoneAccountHandle> accounts=callAccounts();
@@ -502,7 +504,7 @@ public final class MobileActions {
 
   private int subscriptionForSim(String sim){
     int index=simIndex(sim);
-    if(index<1||!granted(Manifest.permission.READ_PHONE_STATE))return -1;
+    if(index<1||!hasPermission(Manifest.permission.READ_PHONE_STATE))return -1;
     try{
       SubscriptionManager manager=(SubscriptionManager)activity.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
       if(manager==null)return -1;

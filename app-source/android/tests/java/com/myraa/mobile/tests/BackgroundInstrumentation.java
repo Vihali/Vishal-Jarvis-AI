@@ -74,10 +74,26 @@ public class BackgroundInstrumentation extends Instrumentation {
     invoke(coordinatorClass,"schedule",new Class[]{Context.class,taskClass},target,task); return task;
   }
   private void force(Object task) throws Exception { shell("cmd jobscheduler run -f com.myraa.mobile "+jobId(task)); }
+  /**
+   * Opens the app window. MainActivity is singleTask, so an already running task
+   * would only receive onNewIntent and startActivitySync would wait forever; the
+   * clear-task flag forces a fresh instance, and the wait itself is bounded.
+   */
+  private Activity openApp() throws Exception {
+    final Intent intent=new Intent().setClassName("com.myraa.mobile","com.myraa.mobile.MainActivity")
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);
+    final Activity[] started={null}; final Exception[] failure={null};
+    Thread thread=new Thread(()->{ try { started[0]=startActivitySync(intent); } catch(Exception e){ failure[0]=e; } },"vishal-open-app");
+    thread.setDaemon(true); thread.start(); thread.join(30000);
+    if(thread.isAlive())throw new Exception("MainActivity did not open within 30 seconds");
+    if(failure[0]!=null)throw failure[0];
+    if(started[0]==null)throw new Exception("MainActivity did not open");
+    return started[0];
+  }
   private void reopen() throws Exception {
     phase("reopen the app window");
     shell("input keyevent KEYCODE_WAKEUP"); shell("wm dismiss-keyguard");
-    activity=startActivitySync(new Intent().setClassName("com.myraa.mobile","com.myraa.mobile.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    activity=openApp();
     Field field=activity.getClass().getDeclaredField("web"); field.setAccessible(true); web=(WebView)field.get(activity);
     until(()->{try{return "true".equals(js("!!window.MyraaNative&&!!window.MyraaEvents"));}catch(Exception e){return false;}},"app UI",45);
   }
