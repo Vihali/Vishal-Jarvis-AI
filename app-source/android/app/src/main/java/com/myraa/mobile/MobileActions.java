@@ -149,7 +149,11 @@ public final class MobileActions {
         }
       }
     },new Contacts() {
-      public boolean needsPermission(){return !permissionsGranted;}
+      public boolean needsPermission(){
+        // The test seam injects its own Contacts, so this branch only runs in the real app.
+        // Reading the field here is illegal before the super constructor; read the grant live.
+        return activity.checkSelfPermission(Manifest.permission.READ_CONTACTS)!=PackageManager.PERMISSION_GRANTED;
+      }
       public List<Recipient> find(String name){
         List<Recipient> found=new ArrayList<>();Set<String> seen=new HashSet<>();
         String escaped=name.replace("\\","\\\\").replace("%","\\%").replace("_","\\_");
