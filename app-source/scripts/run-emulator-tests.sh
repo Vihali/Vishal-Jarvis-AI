@@ -82,9 +82,22 @@ install_apk "$apks/Vishal-Jarvis-tests.apk" 'the instrumentation APK'
 # Grant only permissions needed by the fixture tests. CALL_PHONE is intercepted
 # by the test launcher, so no real call is placed; READ_PHONE_STATE stays
 # ungranted until a test explicitly checks the existing-grant compatibility path.
-timeout 60 adb shell pm grant $APP android.permission.RECORD_AUDIO || true
-timeout 60 adb shell pm grant $APP android.permission.CALL_PHONE || true
-timeout 60 adb shell pm grant $APP android.permission.POST_NOTIFICATIONS || true
+grant_fixture_permissions() {
+  timeout 60 adb shell pm grant $APP android.permission.RECORD_AUDIO || true
+  timeout 60 adb shell pm grant $APP android.permission.CALL_PHONE || true
+  timeout 60 adb shell pm grant $APP android.permission.POST_NOTIFICATIONS || true
+}
+grant_fixture_permissions
+
+# Each instrumentation must start from the state of a freshly installed app.
+# Otherwise a saved key, task queue or history from a previous suite changes the
+# result of the next one.
+reset_app() {
+  say "Resetting $APP to a freshly installed state"
+  timeout 90 adb shell am force-stop $APP >/dev/null 2>&1 || true
+  timeout 120 adb shell pm clear $APP >/dev/null 2>&1 || true
+  grant_fixture_permissions
+}
 
 timeout 60 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
 timeout 60 adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1 || true
@@ -102,6 +115,7 @@ run_test() {
   fi
   (( limit > $(remaining) )) && limit=$(remaining)
   say "--- Running $name (limit ${limit}s) ---"
+  reset_app
   local began; began=$(date +%s)
   timeout --signal=KILL "$limit" adb shell am instrument -w -r \
     "com.myraa.mobile.tests/com.myraa.mobile.tests.$name" 2>&1 | tee "$log"
@@ -131,10 +145,12 @@ run_test() {
   say "PASS: $name"
 }
 
-run_test BackgroundInstrumentation BACKGROUND_TESTS_PASSED
-run_test ActionsInstrumentation 'Checks:'
+# The background suite is the longest one and exercises an installed-but-idle
+# app, so it runs last.
 run_test SmokeInstrumentation 'native Activity and WebView started'
+run_test ActionsInstrumentation 'Checks:'
 run_test AuthInstrumentation 'no live Google traffic'
+run_test BackgroundInstrumentation BACKGROUND_TESTS_PASSED
 
 say "Emulator suite finished in $(elapsed)s with $failures failure(s)"
 if (( failures > 0 )); then

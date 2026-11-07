@@ -335,11 +335,13 @@ public final class MobileActions {
   // ---------------------------------------------------------------- sending
 
   private void sendMessage(String id,JSONObject args){
+    // A confirmation refers to the message that was already prepared and shown,
+    // so it must not require the model to repeat the app, recipient or text.
+    if(args.optBoolean("confirm",false)){confirmSend(id);return;}
     String app=normalize(args.optString("app","whatsapp"));
     if(app.isEmpty())app="whatsapp";
     String text=args.optString("text","").trim();
     if(text.isEmpty()||text.length()>4000){finish(id,"invalid","Tell me the complete message to send.");return;}
-    if(args.optBoolean("confirm",false)){confirmSend(id);return;}
     String recipient=args.optString("recipient","").trim();
     if(recipient.isEmpty()||recipient.length()>100){finish(id,"invalid","Whom should I message? Give a saved name, a phone number or the app username.");return;}
     prepareMessage(id,app,recipient,text,args.optString("sim"));

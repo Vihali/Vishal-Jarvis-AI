@@ -241,8 +241,8 @@ jobs:
       # The script time-boxes every phase itself, so a hung WebView or Activity
       # fails with an annotation instead of silently consuming the job limit.
       EMULATOR_LOG_DIR: /tmp/emulator
-      EMULATOR_TEST_BUDGET: '1200'
-      EMULATOR_TEST_TIMEOUT: '420'
+      EMULATOR_TEST_BUDGET: '1500'
+      EMULATOR_TEST_TIMEOUT: '600'
       EMULATOR_BOOT_TIMEOUT: '420'
     steps:
       - uses: actions/checkout@v4

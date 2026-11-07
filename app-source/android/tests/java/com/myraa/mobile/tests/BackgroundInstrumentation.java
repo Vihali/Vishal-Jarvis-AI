@@ -37,6 +37,10 @@ public class BackgroundInstrumentation extends Instrumentation {
   private Object store, factoryBefore; private Class<?> storeClass, taskClass, coordinatorClass, agentClass;
   private Field factoryField;
   @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+  /** Reports progress so a stalled run still shows where it stopped in the killed log. */
+  private void phase(String label) {
+    Bundle status = new Bundle(); status.putString("phase", label); sendStatus(0, status);
+  }
   private void check(boolean ok, String label) throws Exception { if (!ok) throw new Exception(label); evidence.append("PASS: ").append(label).append('\n'); }
   private Object invoke(Object target, String name, Class<?>[] types, Object... args) throws Exception {
     Class<?> owner = target instanceof Class ? (Class<?>)target : target.getClass();
@@ -56,8 +60,8 @@ public class BackgroundInstrumentation extends Instrumentation {
   }
   private String js(String source) throws Exception {
     CountDownLatch latch=new CountDownLatch(1); String[] value={null};
-    runOnMainSync(()->web.evaluateJavascript(source,result->{value[0]=result;latch.countDown();}));
-    if(!latch.await(30,TimeUnit.SECONDS))throw new Exception("WebView timed out"); return value[0];
+    activity.runOnUiThread(()->web.evaluateJavascript(source,result->{value[0]=result;latch.countDown();}));
+    if(!latch.await(30,TimeUnit.SECONDS))throw new Exception("WebView timed out: "+source); return value[0];
   }
   private String shell(String command) throws Exception {
     ParcelFileDescriptor fd=getUiAutomation().executeShellCommand(command);
@@ -71,6 +75,7 @@ public class BackgroundInstrumentation extends Instrumentation {
   }
   private void force(Object task) throws Exception { shell("cmd jobscheduler run -f com.myraa.mobile "+jobId(task)); }
   private void reopen() throws Exception {
+    phase("reopen the app window");
     shell("input keyevent KEYCODE_WAKEUP"); shell("wm dismiss-keyguard");
     activity=startActivitySync(new Intent().setClassName("com.myraa.mobile","com.myraa.mobile.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     Field field=activity.getClass().getDeclaredField("web"); field.setAccessible(true); web=(WebView)field.get(activity);
@@ -83,6 +88,7 @@ public class BackgroundInstrumentation extends Instrumentation {
   @Override public void onStart() {
     Bundle output=new Bundle();
     try {
+      phase("prepare the fixture account");
       target=getTargetContext(); ClassLoader loader=target.getClassLoader();
       storeClass=loader.loadClass("com.myraa.mobile.AiTaskStore"); taskClass=loader.loadClass("com.myraa.mobile.AiTaskStore$Task");
       coordinatorClass=loader.loadClass("com.myraa.mobile.AiTaskCoordinator"); agentClass=loader.loadClass("com.myraa.mobile.AiAgent");
@@ -106,10 +112,12 @@ public class BackgroundInstrumentation extends Instrumentation {
       check("true".equals(js("!!document.getElementById('avatar')&&!!document.getElementById('search-toggle')&&!!document.getElementById('theme')")),"original character, conversation search and theme controls remain present");
       js("MyraaNative.setTextScale(130);true");
       until(()->{AtomicInteger zoom=new AtomicInteger();runOnMainSync(()->zoom.set(web.getSettings().getTextZoom()));return zoom.get()==130;},"text zoom",10);
+      phase("existing controls and text size");
       check(prefs.getInt("textScale",0)==130,"adjustable text size is saved and applied to the existing WebView");
       js("MyraaNative.setTextScale(100);true");
 
       // Request is already running when the app is minimized and the display is switched off.
+      phase("chat while the screen is off");
       String first=UUID.randomUUID().toString(); blockNext=true; entered=new CountDownLatch(1); release=new CountDownLatch(1);
       js("MyraaNative.chat('Fixture question while the phone sleeps',"+JSONObject.quote(first)+");true");
       check(entered.await(20,TimeUnit.SECONDS),"foreground chat started through the native Gemini transport");
@@ -125,26 +133,31 @@ public class BackgroundInstrumentation extends Instrumentation {
       check(true,"completion notification is posted without exposing the answer");
 
       // Destroying the Activity must hand an in-flight request over to the persisted job.
+      phase("hand an in-flight request over to the job");
       reopen(); String second=UUID.randomUUID().toString(); blockNext=true; entered=new CountDownLatch(1); release=new CountDownLatch(1);
       js("MyraaNative.chat('Resume after Activity destruction',"+JSONObject.quote(second)+");true");
       check(entered.await(20,TimeUnit.SECONDS),"second in-flight request started");
-      runOnMainSync(()->activity.finish()); waitForIdleSync();
+      final Activity doomed=activity; activity.runOnUiThread(doomed::finish);
+      until(doomed::isDestroyed,"Activity destruction",20);
       until(()->"queued".equals(status(second)),"handoff to persistent queue",20);
       Object secondTask=find(second); force(secondTask); until(()->"completed".equals(status(second)),"resumed background job",45);
       check(countHistory(second)==2,"job resumes after Activity destruction and saves exactly one answer");
 
       // A temporary provider disconnect is retained and retried, not dropped.
+      phase("retry a temporary disconnect");
       String third=UUID.randomUUID().toString(); failNext=1; Object thirdTask=enqueue(third,"Retry this connection");
       int before=requests.get(); force(thirdTask);
       until(()->requests.get()>before&&"queued".equals(status(third)),"transient failure retained",30);
       force(thirdTask); until(()->"completed".equals(status(third)),"retry completion",45);
       check(countHistory(third)==2,"temporary network failure retries without duplicating history");
 
+      phase("grounded research request");
       String research=UUID.randomUUID().toString(); Object researchTask=enqueue(research,"Research the latest weather today");
       force(researchTask); until(()->"completed".equals(status(research)),"grounded research",45);
       check(new JSONObject(lastBody).getJSONArray("tools").getJSONObject(0).has("google_search"),"time-sensitive research requests use Gemini Google Search grounding");
       check(target.getSharedPreferences("myraa.mobile.v1",0).getString("history","").contains("https://example.com/source"),"grounded source link is saved with the answer");
 
+      phase("interrupted phone action recovery");
       String recovery=UUID.randomUUID().toString(); Object recoveryTask=enqueue(recovery,"Check a previous phone task");
       invoke(store,"markToolStarted",new Class[]{String.class},recovery); // marking requires running
       invoke(store,"running",new Class[]{String.class},recovery);
@@ -154,6 +167,7 @@ public class BackgroundInstrumentation extends Instrumentation {
       check(!new JSONObject(lastBody).has("tools"),"interrupted phone actions are never automatically replayed");
       check(target.getSharedPreferences("myraa.mobile.v1",0).getString("history","").contains("did not repeat it"),"recovered answer warns that a previous phone action may have started");
 
+      phase("transcript export and sharing");
       Class<?> exporter=loader.loadClass("com.myraa.mobile.TranscriptExport");
       File transcript=(File)invoke(exporter,"create",new Class[]{Context.class},target);
       String fileText; try(InputStream in=new FileInputStream(transcript);ByteArrayOutputStream out=new ByteArrayOutputStream()){
@@ -167,6 +181,7 @@ public class BackgroundInstrumentation extends Instrumentation {
       try(InputStream shared=target.getContentResolver().openInputStream(sharedUri)) {
         check(shared!=null && shared.read()>=0 && !shareOne.getName().equals(shareTwo.getName()),"sharing uses an isolated readable text-file URI for each export");
       }
+      phase("finished");
       output.putString("stream",evidence.toString()+"BACKGROUND_TESTS_PASSED\n"); finish(Activity.RESULT_OK,output);
     } catch(Exception e) {
       StringWriter details=new StringWriter(); e.printStackTrace(new PrintWriter(details));
