@@ -135,8 +135,12 @@ jobs:
       - name: Compile Android and run Java unit tests
         shell: pwsh
         run: |
-          gradle --no-daemon -p android :app:testDebugUnitTest :app:assembleDebug
-          if ($LASTEXITCODE -ne 0) { throw 'Gradle debug build or Android unit tests failed.' }
+          gradle --no-daemon -p android :app:testDebugUnitTest :app:assembleDebug 2>&1 | Tee-Object -FilePath compile.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path compile.log -Pattern 'error:|warning:|What went wrong|Execution failed|Caused by' -SimpleMatch:$false |
+              ForEach-Object { Write-Host "::error title=Java compile::$($_.Line)" }
+            throw 'Gradle debug build or Android unit tests failed.'
+          }
           if ('${{ steps.signing.outputs.mode }}' -eq 'release') {
             gradle --no-daemon -p android :app:assembleRelease
             if ($LASTEXITCODE -ne 0) { throw 'Gradle release build failed.' }
