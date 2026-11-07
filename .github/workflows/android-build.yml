@@ -148,6 +148,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
+      - name: Checkout test scripts
+        uses: actions/checkout@v4
       - name: Download debug APK
         uses: actions/download-artifact@v4
         with:
@@ -171,16 +173,4 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
-          script: |
-            set -eu
-            adb install -r apk/Vishal-Jarvis-1.1.0-private.apk
-            adb install -r apk/Vishal-Jarvis-tests.apk
-            for test in SmokeInstrumentation AuthInstrumentation ActionsInstrumentation; do
-              echo "Running $test"
-              output=$(timeout 300 adb shell am instrument -w "com.myraa.mobile.tests/com.myraa.mobile.tests.$test" 2>&1) || { echo "::error::Instrumentation command failed for $test"; exit 1; }
-              printf '%s\n' "$output"
-              if ! printf '%s\n' "$output" | grep -q 'INSTRUMENTATION_CODE: -1' || printf '%s\n' "$output" | grep -qE 'FAIL:|INSTRUMENTATION_FAILED|Process crashed'; then
-                echo "::error::Instrumentation $test failed: $(printf '%s\n' "$output" | tail -12 | tr '\n' ' ')"
-                exit 1
-              fi
-            done
+          script: bash tests/run-emulator.sh
